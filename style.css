@@ -1,0 +1,351 @@
+body {
+    margin: 0;
+    font-family: sans-serif;
+    overflow: hidden;
+}
+
+#nav-bar {
+    width: 100vw;
+    background: #fff;
+    padding: 18px 0 12px 0;
+    display: flex;
+    gap: 36px;
+    align-items: center;
+    justify-content: flex-start;
+    box-shadow: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 10000;
+    border-bottom: 1px solid #f2f2f2;
+    min-height: 44px;
+    border-radius: 0;
+}
+#nav-bar button {
+    background: none;
+    color: #222;
+    border: none;
+    border-radius: 0;
+    padding: 0 8px;
+    font-size: 18px;
+    font-weight: 400;
+    font-family: 'Inter', 'Pretendard', 'Noto Sans KR', Arial, sans-serif;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    box-shadow: none;
+    transition: color 0.18s, border-bottom 0.18s;
+    outline: none;
+    margin: 0;
+    display: inline-block;
+    height: 32px;
+    line-height: 32px;
+    border-bottom: 2px solid transparent;
+}
+#nav-bar button:hover {
+    color: #0078ff;
+    border-bottom: 2px solid #0078ff;
+    background: none;
+}
+#nav-bar button:active {
+    color: #005bb5;
+    border-bottom: 2px solid #005bb5;
+    background: none;
+}
+#nav-bar button:focus {
+    color: #0078ff;
+    border-bottom: 2px solid #0078ff;
+    background: none;
+}
+
+#menu-bar {
+    width: 100vw;
+    background: #f4f6fa;
+    padding: 0 0 0 16px;
+    display: flex;
+    gap: 32px;
+    align-items: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 10000;
+    border-bottom: 1px solid #ececec;
+    min-height: 44px;
+    font-family: 'Inter', 'Pretendard', 'Noto Sans KR', Arial, sans-serif;
+    font-size: 17px;
+    font-weight: 400;
+    user-select: none;
+}
+.menu-item {
+    position: relative;
+    padding: 0 18px;
+    height: 44px;
+    line-height: 44px;
+    cursor: pointer;
+    color: #222;
+    transition: color 0.18s;
+}
+.menu-item:hover {
+    color: #0078ff;
+    background: #f5faff;
+}
+.dropdown {
+    display: none;
+    position: absolute;
+    top: 44px;
+    left: 0;
+    background: #fff;
+    border: 1px solid #ececec;
+    border-radius: 0 0 8px 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+    min-width: 140px;
+    z-index: 10001;
+    flex-direction: column;
+}
+.menu-item:hover .dropdown {
+    display: flex;
+}
+.dropdown-item {
+    padding: 10px 18px;
+    color: #222;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+    font-size: 16px;
+}
+.dropdown-item:hover {
+    background: #eaf4ff;
+    color: #0078ff;
+}
+.dropdown-item.disabled {
+    color: #bbb !important;
+    background: #f4f6fa !important;
+    cursor: not-allowed !important;
+    opacity: 0.6;
+    pointer-events: none;
+}
+.dropdown-item .check {
+    display: inline-block;
+    width: 18px;
+    text-align: center;
+    font-weight: bold;
+    margin-right: 2px;
+    color: #0078ff;
+}
+.dropdown-divider {
+    height: 1px;
+    background: #ececec;
+    margin: 4px 0 4px 0;
+    border: none;
+    width: 100%;
+}
+
+#container {
+    position: relative;
+    margin-top: 44px;
+    padding-top: 0;
+    width: 100vw;
+    height: calc(100vh - 52px);
+    display: flex;
+    box-sizing: border-box;
+}
+#c-wrapper {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+#axis-orbit {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 120px;
+  height: 120px;
+  background: transparent;
+  z-index: 10;
+  cursor: pointer;
+}
+
+#c {
+    flex-grow: 1;
+    display: block;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+#texture-palette {
+    width: 200px;
+    padding: 15px;
+    box-sizing: border-box;
+    border-left: 1px solid #ccc;
+    background-color: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    position: relative;
+    top: 0;
+    height: 100%;
+}
+
+#texture-palette h3 {
+    margin-top: 0;
+    text-align: center;
+}
+
+.texture-option {
+    width: 100%;
+    height: auto;
+    cursor: pointer;
+    border: 3px solid #e0e0e0;
+    box-sizing: border-box;
+    border-radius: 5px;
+    transition: border-color 0.2s;
+}
+
+.texture-option:hover {
+    border-color: #bdbdbd;
+}
+
+.texture-option.active {
+    border-color: dodgerblue;
+}
+
+/* 컨텍스트 메뉴 스타일 */
+.context-menu {
+    position: absolute;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    z-index: 1000;
+    display: none;
+    min-width: 120px;
+}
+
+.context-menu-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+    border-bottom: 1px solid #eee;
+}
+
+.context-menu-item:last-child {
+    border-bottom: none;
+}
+
+.context-menu-item:hover {
+    background-color: #f0f0f0;
+}
+
+.context-menu-item:active {
+    background-color: #e0e0e0;
+} 
+
+#toolbar-vertical {
+    border-radius: 10px;
+    position: fixed;
+    top: 56px;
+    left: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    z-index: 9000;
+    background: #cccccc;
+    box-shadow: none;
+    border: none;
+    padding: 2px 0;
+    min-width: 44px;
+}
+.tool-btn {
+    width: 44px;
+    height: 44px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0;
+    color: #444;
+    cursor: pointer;
+    outline: none;
+    padding: 0;
+    margin: 0;
+    box-shadow: none;
+    position: relative;
+    text-align: center;
+}
+.tool-btn:not(:last-child) {
+    border-bottom: 1px solid #d0d0d0;
+}
+.tool-btn.active {
+    background: #fff;
+}
+.tool-btn .icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    line-height: 0;
+    pointer-events: none;
+    text-align: center;
+}
+.tool-btn .icon svg {
+    display: block;
+    width: 26px;
+    height: 26px;
+    margin: auto;
+    padding: 0;
+    stroke: #333;
+    vertical-align: middle;
+    line-height: 0;
+    box-sizing: content-box;
+}
+.tool-btn i,
+.tool-btn i[data-feather],
+.tool-btn i[data-feather] svg {
+    display: block !important;
+    margin: auto !important;
+    width: 22px !important;
+    height: 22px !important;
+    vertical-align: middle !important;
+    padding: 0 !important;
+    line-height: 0 !important;
+    box-sizing: content-box !important;
+}
+.tool-btn.active, .tool-btn:active {
+    background: #ededed;
+    border: 1.5px solid #bbb;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+}
+.tool-btn.active i, .tool-btn:active i {
+    stroke: #222;
+}
+.tool-btn:hover {
+    background: #ededed;
+    border: 1.5px solid #bbb;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+}
+.tool-btn:hover i {
+    stroke: #222;
+}
+.tool-btn:focus,
+.tool-btn.active:focus,
+.tool-btn:active:focus {
+    outline: none !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+@media (hover: none) and (pointer: coarse) {
+    .tool-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+    }
+    #toolbar-vertical {
+        min-width: 48px;
+        padding: 8px 4px;
+    }
+} 
+

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Texture Painter</title>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <!-- Feather Icons CDN -->
+    <script src="https://unpkg.com/feather-icons"></script>
+    <script src="js/History.js"></script>
+    <script type="module" src="js/main.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav id="menu-bar">
+        <div class="menu-item">파일
+            <div class="dropdown">
+                <div class="dropdown-item">저장</div>
+                <div class="dropdown-item">불러오기</div>
+            </div>
+        </div>
+        <div class="menu-item">편집
+            <div class="dropdown">
+                <div class="dropdown-item">실행 취소</div>
+                <div class="dropdown-item">다시 실행</div>
+                <div class="dropdown-item">삭제</div>
+            </div>
+        </div>
+        <div class="menu-item">보기
+            <div class="dropdown">
+                <div class="dropdown-item" id="toggle-grid"><span class="check" style="display:inline-block;width:18px;text-align:center;"></span>격자 보기</div>
+                <div class="dropdown-divider"></div>
+                <div class="dropdown-item">전체화면</div>
+            </div>
+        </div>
+        <div class="menu-item">그리기
+            <div class="dropdown">
+                <div class="dropdown-divider"></div>
+                <div class="dropdown-item">사각형</div>
+                <div class="dropdown-item">원</div>
+            </div>
+        </div>
+        <div class="menu-item">도움말
+            <div class="dropdown">
+                <div class="dropdown-item">단축키 안내</div>
+                <div class="dropdown-item">버전 정보</div>
+            </div>
+        </div>
+    </nav>
+    <div id="container">
+        <div id="c-wrapper">
+            <canvas id="c"></canvas>
+            <canvas id="axis-orbit" width="120" height="120"></canvas>
+        </div>
+        <div id="texture-palette">
+            <h3>텍스처 선택</h3>
+            <img src="textures/wood.jpg" alt="Wood Texture" data-texture="textures/wood.jpg" class="texture-option active">
+            <img src="textures/brick.jpg" alt="Brick Texture" data-texture="textures/brick.jpg" class="texture-option">
+            <img src="textures/stone.jpg" alt="Brick Texture" data-texture="textures/stone.jpg" class="texture-option">
+        </div>
+        <div id="dimension-info" style="display:none; padding: 15px; background: #fffbe7; border-left: 1px solid #ccc; min-width: 180px; font-size: 16px;">
+            <b>크기 정보</b><br>
+            가로: -<br>
+            세로: -<br>
+            높이: -
+        </div>
+        <div id="context-menu" class="context-menu">
+            <div class="context-menu-item" id="delete-object">객체 삭제</div>
+        </div>
+    </div>
+    <!-- 캔버스 세로 툴바 -->
+    <div id="toolbar-vertical">
+        <button class="tool-btn" id="tool-move" title="이동"><span data-feather="move"  class="icon"></span></button>
+        <button class="tool-btn" id="tool-refresh" title="회전"><span data-feather="refresh-ccw" class="icon"></span></button>
+        <button class="tool-btn active" id="tool-scale" title="그리기"><span data-feather="pen-tool" class="icon"></span></button>
+    </div>
+</body>
+</html> 
