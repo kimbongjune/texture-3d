@@ -34,6 +34,9 @@ controls.enablePan = true;
 controls.enableRotate = true;
 controls.minDistance = 1;
 controls.maxDistance = 30;
+// === 카메라가 바닥 아래로 내려가지 않도록 제한 ===
+controls.minPolarAngle = 0;
+controls.maxPolarAngle = Math.PI / 2 - 0.01;
 // === 카메라/컨트롤 초기 위치/각도 ===
 camera.position.set(0, 8, 8);
 camera.lookAt(0, 0, 0);
@@ -325,6 +328,8 @@ function deleteObject(objectToDelete) {
 
 let oldTransformData = null; // 돌출 시작 시점의 상태 저장용
 
+// extrude 시작 시 extrudeBaseY 저장
+let extrudeBaseY = null;
 function onPointerDown(event) {
     if (event.button !== 0) return;
     // drawingMode가 아닐 때는 바닥 그리기 동작 금지
@@ -347,6 +352,9 @@ function onPointerDown(event) {
             position: extrudeTarget.position.clone(),
             scale: extrudeTarget.scale.clone()
         };
+        // extrude 시작 시 바닥 위치 저장
+        const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
+        extrudeBaseY = extrudeTarget.position.y - height/2;
         highlightMesh.visible = false;
         return;
     }
@@ -500,7 +508,7 @@ function onPointerMove(event) {
         const oldHeight = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
         let newHeight = Math.max(0.1, oldHeight - deltaY * 0.05);
         let snapMin = 0.18;
-        let myTop = extrudeTarget.position.y + newHeight / 2;
+        let myTop = extrudeBaseY + newHeight;
         let snapTargetY = null;
         let minDist = snapMin;
         drawableObjects.forEach(obj => {
@@ -521,7 +529,7 @@ function onPointerMove(event) {
         }
         if (snapTargetY !== null) {
             // 스냅: 면에 딱 맞게 붙임 + 가이드 표시
-            newHeight = Math.abs(snapTargetY - (extrudeTarget.position.y - oldHeight / 2));
+            newHeight = Math.abs(snapTargetY - extrudeBaseY);
             snapGuide.visible = true;
             snapGuide.position.set(extrudeTarget.position.x, snapTargetY, extrudeTarget.position.z);
         } else {
@@ -529,7 +537,7 @@ function onPointerMove(event) {
             lastMouseY = event.clientY;
         }
         const newScaleY = newHeight / extrudeTarget.geometry.parameters.height;
-        extrudeTarget.position.y += (newHeight - oldHeight) / 2;
+        extrudeTarget.position.y = extrudeBaseY + newHeight / 2;
         extrudeTarget.scale.y = newScaleY;
         // === 크기 정보 마우스 따라다니며 표시 (Extrude) ===
         const width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
@@ -756,31 +764,27 @@ function onPointerUp(event) {
         const newHeight = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
         const newDepth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
         const newGeom = new THREE.BoxGeometry(newWidth, newHeight, newDepth);
-        
         // TransformCommand를 위한 새 상태
+        // extrudeBaseY가 있으면 그 기준으로 position.y 계산
+        const baseY = extrudeBaseY !== null ? extrudeBaseY : extrudeTarget.position.y - newHeight / 2;
         const newTransformData = {
             geometry: newGeom,
-            position: new THREE.Vector3(extrudeTarget.position.x, newHeight / 2, extrudeTarget.position.z),
+            position: new THREE.Vector3(extrudeTarget.position.x, baseY + newHeight / 2, extrudeTarget.position.z),
             scale: new THREE.Vector3(1, 1, 1)
         };
-        
         // 현재 객체를 undo 상태로 되돌리고, command를 통해 redo 상태로 만듦
         extrudeTarget.geometry.dispose();
         extrudeTarget.geometry = oldTransformData.geometry;
         extrudeTarget.position.copy(oldTransformData.position);
         extrudeTarget.scale.copy(oldTransformData.scale);
-
         const command = new TransformCommand(extrudeTarget, oldTransformData, newTransformData);
         history.execute(command);
-
-        // 축 가이드 라인들만 제거 (높이 가이드라인은 사용 안함)
         clearAxisGuideLines();
-
         isExtruding = false;
         extrudeTarget = null;
         controls.enabled = true;
-        oldTransformData = null; // 초기화
-
+        oldTransformData = null;
+        extrudeBaseY = null;
         // === 크기 정보 숨김 ===
         const dimensionDiv = document.getElementById('dimension-info');
         if (dimensionDiv) {
@@ -1278,6 +1282,14 @@ function animate() {
       }
     }
 
+    // === 팬(이동)으로 지하로 내려가는 것 방지 ===
+    if (controls.target.y < 0) {
+        const delta = -controls.target.y;
+        controls.target.y = 0;
+        camera.position.y += delta;
+        controls.update();
+    }
+
     if (resizeRendererToDisplaySize(renderer)) {
         const canvas = renderer.domElement;
         camera.aspect = canvas.clientWidth / canvas.clientHeight;
@@ -1423,7 +1435,7 @@ window.addEventListener('DOMContentLoaded', () => {
 // === 툴바 버튼 활성화 관리 (아이콘 종류와 무관하게 동작) ===
 window.addEventListener('DOMContentLoaded', () => {
     const toolBtns = Array.from(document.querySelectorAll('#toolbar-vertical .tool-btn'));
-    const moveBtn = document.getElementById('tool-move');
+    const moveBtn = document.getElementById('tool-select');
     const rotateBtn = document.getElementById('tool-refresh');
     const drawBtn = document.getElementById('tool-scale');
     toolBtns.forEach(btn => {
@@ -1481,6 +1493,7 @@ function highlightSelected(obj) {
             transparent: true,
             opacity: 0.4,
             depthWrite: false,
+            depthTest: false, // 추가
             side: THREE.DoubleSide
         })
     );
@@ -1521,32 +1534,111 @@ renderer.domElement.addEventListener('pointerdown', function(event) {
             if (raycaster.ray.intersectPlane(plane, intersect)) {
                 dragOffset.copy(selectedObject.position).sub(intersect);
             }
+            // 이동 시작 위치 저장
+            selectStartPosition = selectedObject.position.clone();
         } else {
             // 빈 공간 클릭 시 선택 해제
             if (selectedObject) clearSelectedHighlight(selectedObject);
             selectedObject = null;
             selectedFaceIndex = null;
+            selectStartPosition = null;
         }
     }
 });
 renderer.domElement.addEventListener('pointermove', function(event) {
-    if (moveMode && isDraggingSelected && selectedObject && event.buttons === 1) { // 좌클릭 드래그만 허용
+    if (moveMode && isDraggingSelected && selectedObject && event.buttons === 1) {
         updateMouseAndRaycaster(event);
         const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -selectedObject.position.y);
         raycaster.setFromCamera(mouse, camera);
         const intersect = new THREE.Vector3();
         if (raycaster.ray.intersectPlane(plane, intersect)) {
-            selectedObject.position.copy(intersect.clone().add(dragOffset));
+            let newPos = intersect.clone().add(dragOffset);
+            clearSelectSnapGuideLines();
+            const snapThreshold = 0.1;
+            const myWidth = selectedObject.geometry.parameters.width * selectedObject.scale.x;
+            const myDepth = selectedObject.geometry.parameters.depth * selectedObject.scale.z;
+            const myHeight = selectedObject.geometry.parameters.height * selectedObject.scale.y;
+            // 내 도형의 x/z 관련 모든 좌표
+            const myX = [newPos.x, newPos.x - myWidth/2, newPos.x + myWidth/2];
+            const myZ = [newPos.z, newPos.z - myDepth/2, newPos.z + myDepth/2];
+            let snapX = newPos.x;
+            let snapZ = newPos.z;
+            let snappedX = false, snappedZ = false;
+            drawableObjects.forEach(obj => {
+                if (obj === selectedObject) return;
+                const objWidth = obj.geometry.parameters.width * obj.scale.x;
+                const objDepth = obj.geometry.parameters.depth * obj.scale.z;
+                // 상대 도형의 x/z 관련 모든 좌표
+                const objX = [obj.position.x, obj.position.x - objWidth/2, obj.position.x + objWidth/2];
+                const objZ = [obj.position.z, obj.position.z - objDepth/2, obj.position.z + objDepth/2];
+                // x축 모든 조합
+                myX.forEach(mx => {
+                    objX.forEach(ox => {
+                        if (Math.abs(mx - ox) < snapThreshold) {
+                            snapX = newPos.x + (ox - mx);
+                            snappedX = true;
+                            showSelectSnapGuideLine('x', ox, obj.position.z, objDepth);
+                        }
+                    });
+                });
+                // z축 모든 조합
+                myZ.forEach(mz => {
+                    objZ.forEach(oz => {
+                        if (Math.abs(mz - oz) < snapThreshold) {
+                            snapZ = newPos.z + (oz - mz);
+                            snappedZ = true;
+                            showSelectSnapGuideLine('z', oz, obj.position.x, objWidth);
+                        }
+                    });
+                });
+            });
+            if (snappedX) newPos.x = snapX;
+            if (snappedZ) newPos.z = snapZ;
+            // === 쌓기(y축) ===
+            // 마우스 아래에 도형이 있으면, 내 도형의 x/z 중심이 그 도형의 x/z 평면 범위 안에 들어가면 쌓기
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(drawableObjects.filter(obj => obj !== selectedObject));
+            if (intersects.length > 0) {
+                const underObj = intersects[0].object;
+                const underWidth = underObj.geometry.parameters.width * underObj.scale.x;
+                const underDepth = underObj.geometry.parameters.depth * underObj.scale.z;
+                const underHeight = underObj.geometry.parameters.height * underObj.scale.y;
+                const underTop = underObj.position.y + underHeight/2;
+                // 내 도형의 x/z 중심이 아래 도형의 x/z 평면 범위 안에 들어가는지 체크
+                if (
+                    newPos.x > underObj.position.x - underWidth/2 &&
+                    newPos.x < underObj.position.x + underWidth/2 &&
+                    newPos.z > underObj.position.z - underDepth/2 &&
+                    newPos.z < underObj.position.z + underDepth/2
+                ) {
+                    newPos.y = underTop + myHeight/2;
+                } else {
+                    // 바닥에 붙이기
+                    newPos.y = myHeight/2;
+                }
+            } else {
+                // 바닥에 붙이기
+                newPos.y = myHeight/2;
+            }
+            selectedObject.position.copy(newPos);
         }
+    } else {
+        clearSelectSnapGuideLines();
     }
 });
 renderer.domElement.addEventListener('pointerup', function(event) {
-    if (moveMode && isDraggingSelected) {
+    if (moveMode && isDraggingSelected && selectedObject) {
         isDraggingSelected = false;
         // 드래그가 끝나면 현재 머티리얼을 다시 저장
         if (selectedObject) {
             selectedObject.userData._origMaterial = selectedObject.material.map(m => m.clone());
         }
+        // 이동 종료 위치 저장 및 Undo/Redo 기록
+        let selectEndPosition = selectedObject.position.clone();
+        if (selectStartPosition && !selectStartPosition.equals(selectEndPosition)) {
+            history.execute(new SelectObjectCommand(selectedObject, selectStartPosition, selectEndPosition));
+        }
+        selectStartPosition = null;
     }
 });
 window.addEventListener('keydown', function(event) {
@@ -1573,7 +1665,7 @@ window.addEventListener('keydown', function(event) {
         rotateMode = false;
         // 툴바 UI 동기화
         const toolBtns = Array.from(document.querySelectorAll('#toolbar-vertical .tool-btn'));
-        const moveBtn = document.getElementById('tool-move');
+        const moveBtn = document.getElementById('tool-select');
         const rotateBtn = document.getElementById('tool-refresh');
         const drawBtn = document.getElementById('tool-scale');
         toolBtns.forEach(b => b.classList.remove('active'));
@@ -1593,3 +1685,40 @@ window.addEventListener('keydown', function(event) {
         }
     }
 }); 
+
+// 이동(드래그) 중 스냅 가이드 라인 변수 추가
+let selectSnapGuideLines = [];
+
+function clearSelectSnapGuideLines() {
+    selectSnapGuideLines.forEach(line => {
+        scene.remove(line);
+        line.geometry.dispose();
+        line.material.dispose();
+    });
+    selectSnapGuideLines = [];
+}
+
+function showSelectSnapGuideLine(axis, position, centerPos, size) {
+    let geometry, guideLine;
+    const material = new THREE.MeshBasicMaterial({ 
+        color: 0xff00ff, 
+        transparent: true, 
+        opacity: 0.7 
+    });
+    if (axis === 'x') {
+        geometry = new THREE.PlaneGeometry(0.05, size + 2);
+        guideLine = new THREE.Mesh(geometry, material);
+        guideLine.rotation.x = -Math.PI / 2;
+        guideLine.position.set(position, 0.02, centerPos);
+    } else { // z축
+        geometry = new THREE.PlaneGeometry(size + 2, 0.05);
+        guideLine = new THREE.Mesh(geometry, material);
+        guideLine.rotation.x = -Math.PI / 2;
+        guideLine.position.set(centerPos, 0.02, position);
+    }
+    scene.add(guideLine);
+    selectSnapGuideLines.push(guideLine);
+}
+
+// 이동(드래그) Undo/Redo를 위한 위치 저장 변수
+let selectStartPosition = null;

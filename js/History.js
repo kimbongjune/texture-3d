@@ -78,6 +78,24 @@ class TextureCommand extends Command {
     }
 }
 
+// 4. 객체 선택 Command
+class SelectObjectCommand extends Command {
+    constructor(object, oldSelection, newSelection) {
+        super();
+        this.object = object;
+        this.oldSelection = oldSelection;
+        this.newSelection = newSelection;
+    }
+
+    execute() {
+        this.object.position.copy(this.newSelection);
+    }
+
+    undo() {
+        this.object.position.copy(this.oldSelection);
+    }
+}
+
 // History 관리 클래스
 class History {
     constructor() {
