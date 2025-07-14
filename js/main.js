@@ -4,6 +4,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 let drawingMode = true;
 let moveMode = false;
 let rotateMode = false;
+// === 선택/하이라이트 오버레이 관련 전역 변수 ===
+let selectedObject = null;
+let highlightOverlayMesh = null;
 // --- 스냅 관련 설정 ---
 const snapDistance = 0.5; // 스냅이 활성화되는 최대 거리
 let snapGuide = null; // 스냅 위치를 시각적으로 보여주는 도우미
@@ -900,7 +903,7 @@ function onPointerUp(event) {
 }
 
 function updateHighlight() {
-    if (isDrawing || isExtruding || isExtrudingX || isExtrudingZ) {
+    if (isDrawing || isExtruding || isExtrudingX || isExtrudingZ || moveMode) { // moveMode 추가
         if(highlightMesh) highlightMesh.visible = false;
         return;
     }
@@ -1322,6 +1325,12 @@ function animate() {
             ctx.restore();
         }
     }
+
+    if (selectedObject && highlightOverlayMesh) {
+        highlightOverlayMesh.position.copy(selectedObject.position);
+        highlightOverlayMesh.rotation.copy(selectedObject.rotation);
+        highlightOverlayMesh.scale.copy(selectedObject.scale);
+    }
 }
 
 animate(); 
@@ -1435,6 +1444,18 @@ window.addEventListener('DOMContentLoaded', () => {
                 moveMode = false;
                 rotateMode = true;
             }
+            // === 모드 변경 시 선택된 도형 하이라이트 해제 ===
+            if (selectedObject) {
+                clearSelectedHighlight(selectedObject);
+                selectedObject = null;
+            }
+            // === 모드 변경 시 스냅/가이드/프리뷰 등 모두 숨기기 ===
+            if (typeof snapGuide !== 'undefined' && snapGuide) snapGuide.visible = false;
+            if (typeof clearAxisGuideLines === 'function') clearAxisGuideLines();
+            if (typeof previewMesh !== 'undefined' && previewMesh) {
+                scene.remove(previewMesh);
+                previewMesh = null;
+            }
         });
     });
     // 페이지 첫 로딩 시 상태값 동기화
@@ -1443,36 +1464,53 @@ window.addEventListener('DOMContentLoaded', () => {
     rotateMode = rotateBtn.classList.contains('active');
 }); 
 
-let selectedObject = null;
+let selectedFaceIndex = null;
 let isDraggingSelected = false;
 let dragOffset = new THREE.Vector3();
 
 function highlightSelected(obj) {
     if (!obj) return;
-    obj.userData._origMaterial = obj.material.map(m => m.clone());
-    // 눈에 덜 띄는 연한 파랑색(0x3399ff)으로 변경
-    obj.material.forEach(m => m.emissive && m.emissive.setHex(0x3399ff));
+    if (highlightOverlayMesh) {
+        scene.remove(highlightOverlayMesh);
+        highlightOverlayMesh = null;
+    }
+    highlightOverlayMesh = new THREE.Mesh(
+        obj.geometry.clone(),
+        new THREE.MeshStandardMaterial({
+            color: 0x3399ff,
+            transparent: true,
+            opacity: 0.4,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        })
+    );
+    highlightOverlayMesh.position.copy(obj.position);
+    highlightOverlayMesh.rotation.copy(obj.rotation);
+    highlightOverlayMesh.scale.copy(obj.scale);
+    highlightOverlayMesh.renderOrder = 9999;
+    scene.add(highlightOverlayMesh);
 }
+
 function clearSelectedHighlight(obj) {
-    if (!obj || !obj.userData._origMaterial) return;
-    obj.material.forEach((m, i) => {
-        if (obj.userData._origMaterial[i]) {
-            m.copy(obj.userData._origMaterial[i]);
-        }
-    });
-    delete obj.userData._origMaterial;
+    if (highlightOverlayMesh) {
+        scene.remove(highlightOverlayMesh);
+        highlightOverlayMesh = null;
+    }
 }
 
 renderer.domElement.addEventListener('pointerdown', function(event) {
-    if (moveMode) {
+    if (moveMode && event.button === 0) { // 좌클릭만 허용
         updateMouseAndRaycaster(event);
         const intersects = raycaster.intersectObjects(drawableObjects);
         if (intersects.length > 0) {
+            const obj = intersects[0].object;
+            const faceIndex = intersects[0].face.materialIndex;
             // 도형 선택
-            if (selectedObject && selectedObject !== intersects[0].object) {
+            if (selectedObject && (selectedObject !== obj || selectedFaceIndex !== faceIndex)) {
                 clearSelectedHighlight(selectedObject);
             }
-            selectedObject = intersects[0].object;
+            selectedObject = obj;
+            selectedFaceIndex = faceIndex;
             highlightSelected(selectedObject);
             // 드래그 준비
             isDraggingSelected = true;
@@ -1487,11 +1525,12 @@ renderer.domElement.addEventListener('pointerdown', function(event) {
             // 빈 공간 클릭 시 선택 해제
             if (selectedObject) clearSelectedHighlight(selectedObject);
             selectedObject = null;
+            selectedFaceIndex = null;
         }
     }
 });
 renderer.domElement.addEventListener('pointermove', function(event) {
-    if (moveMode && isDraggingSelected && selectedObject) {
+    if (moveMode && isDraggingSelected && selectedObject && event.buttons === 1) { // 좌클릭 드래그만 허용
         updateMouseAndRaycaster(event);
         const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -selectedObject.position.y);
         raycaster.setFromCamera(mouse, camera);
@@ -1504,16 +1543,20 @@ renderer.domElement.addEventListener('pointermove', function(event) {
 renderer.domElement.addEventListener('pointerup', function(event) {
     if (moveMode && isDraggingSelected) {
         isDraggingSelected = false;
+        // 드래그가 끝나면 현재 머티리얼을 다시 저장
+        if (selectedObject) {
+            selectedObject.userData._origMaterial = selectedObject.material.map(m => m.clone());
+        }
     }
 });
 window.addEventListener('keydown', function(event) {
     if (moveMode && selectedObject && (event.key === 'Delete' || event.key === 'Backspace')) {
-        // 도형 삭제
         clearSelectedHighlight(selectedObject);
         scene.remove(selectedObject);
         const idx = drawableObjects.indexOf(selectedObject);
         if (idx !== -1) drawableObjects.splice(idx, 1);
         selectedObject = null;
+        selectedFaceIndex = null;
     }
 }); 
 
@@ -1535,10 +1578,18 @@ window.addEventListener('keydown', function(event) {
         const drawBtn = document.getElementById('tool-scale');
         toolBtns.forEach(b => b.classList.remove('active'));
         if (drawBtn) drawBtn.classList.add('active');
-        // 선택된 도형 선택 해제
+        // 선택된 도형 선택 해제 및 색상 복원
         if (selectedObject) {
             clearSelectedHighlight(selectedObject);
             selectedObject = null;
+            selectedFaceIndex = null;
+        }
+        // === 스냅/가이드/프리뷰 등 모두 숨기기 ===
+        if (typeof snapGuide !== 'undefined' && snapGuide) snapGuide.visible = false;
+        if (typeof clearAxisGuideLines === 'function') clearAxisGuideLines();
+        if (typeof previewMesh !== 'undefined' && previewMesh) {
+            scene.remove(previewMesh);
+            previewMesh = null;
         }
     }
 }); 
