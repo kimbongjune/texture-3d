@@ -15,6 +15,8 @@ let allVertices = []; // 스냅 대상이 되는 모든 꼭짓점
 // 1. 기본 설정
 const canvas = document.querySelector('#c');
 const renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xeeeeee);
@@ -62,13 +64,36 @@ if (axisOrbitCanvas) {
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
 scene.add(ambientLight);
 
+// === 추가: hemisphere light ===
+const hemisphereLight = new THREE.HemisphereLight(0xcce6ff, 0xf0f0f0, 0.7);
+hemisphereLight.visible = false;
+scene.add(hemisphereLight);
+
 const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
 directionalLight.position.set(5, 10, 7.5);
+directionalLight.castShadow = true;
+directionalLight.shadow.mapSize.width = 1024;
+directionalLight.shadow.mapSize.height = 1024;
+directionalLight.shadow.camera.near = 1;
+directionalLight.shadow.camera.far = 50;
+directionalLight.shadow.camera.left = -20;
+directionalLight.shadow.camera.right = 20;
+directionalLight.shadow.camera.top = 20;
+directionalLight.shadow.camera.bottom = -20;
 scene.add(directionalLight);
 
 // 3. 그리기 환경 설정
 const gridHelper = new THREE.GridHelper(100, 100);
 scene.add(gridHelper);
+// 바닥 그림자 받기용 plane 추가
+const shadowGround = new THREE.Mesh(
+    new THREE.PlaneGeometry(100, 100),
+    new THREE.ShadowMaterial({ opacity: 0.18 })
+);
+shadowGround.rotation.x = -Math.PI / 2;
+shadowGround.position.y = 0;
+shadowGround.receiveShadow = true;
+scene.add(shadowGround);
 setupSnapGuide(); // 스냅 도우미 초기화
 
 // --- History 관리 ---
@@ -239,24 +264,46 @@ function onCanvasClick(event) {
 let contextMenu = null;
 let contextMenuTarget = null;
 
+// 우클릭 context-menu 드래그 방지용 변수
+let rightClickDownPos = null;
+let rightClickDragThreshold = 5; // px
+renderer.domElement.addEventListener('pointerdown', function(event) {
+    if (event.button === 2 || event.button === 1) {
+        hideContextMenu();
+    }
+    if (event.button === 2) { // 우클릭
+        rightClickDownPos = { x: event.clientX, y: event.clientY };
+    }
+});
+renderer.domElement.addEventListener('pointerup', function(event) {
+    if (event.button === 2) {
+        // pointerup에서 contextmenu가 뜨는 것을 막기 위해 좌표 차이 기록
+        if (rightClickDownPos) {
+            const dx = event.clientX - rightClickDownPos.x;
+            const dy = event.clientY - rightClickDownPos.y;
+            rightClickDownPos.dragged = (Math.abs(dx) > rightClickDragThreshold || Math.abs(dy) > rightClickDragThreshold);
+        }
+    }
+});
 function onRightClick(event) {
     event.preventDefault(); // 기본 컨텍스트 메뉴 방지
-    
+    // 드래그(마우스 이동) 시에는 context-menu 띄우지 않음
+    if (rightClickDownPos && rightClickDownPos.dragged) {
+        rightClickDownPos = null;
+        return;
+    }
+    rightClickDownPos = null;
     // 기존 컨텍스트 메뉴 숨김
     hideContextMenu();
-    
     // 마우스 위치 업데이트
     updateMouseAndRaycaster(event);
     const intersects = raycaster.intersectObjects(drawableObjects);
-    
     if (intersects.length > 0) {
         const targetObject = intersects[0].object;
-        
         // 돌출 중인 객체는 컨텍스트 메뉴 표시 안함
         if (isExtruding && extrudeTarget === targetObject) {
             return;
         }
-        
         // 컨텍스트 메뉴 표시
         showContextMenu(event.clientX, event.clientY, targetObject);
     }
@@ -271,6 +318,17 @@ function showContextMenu(x, y, targetObject) {
         deleteButton.addEventListener('click', () => {
             if (contextMenuTarget) {
                 deleteObject(contextMenuTarget);
+                hideContextMenu();
+            }
+        });
+        
+        // 복사 버튼 클릭 이벤트
+        const copyButton = document.getElementById('copy-object');
+        copyButton.addEventListener('click', () => {
+            if (contextMenuTarget) {
+                const newObj = deepCloneMesh(contextMenuTarget);
+                const command = new AddObjectCommand(scene, newObj, drawableObjects);
+                history.execute(command);
                 hideContextMenu();
             }
         });
@@ -324,15 +382,55 @@ function deleteObject(objectToDelete) {
     
     // 꼭짓점 목록 업데이트
     updateAllVertices();
+
+    // 객체 목록 패널 갱신
+    renderObjectListPanel();
+
+    // 선택 하이라이트 메시가 삭제되는 객체를 참조하면 제거
+    if (selectedObject === objectToDelete) {
+        clearSelectedHighlight(selectedObject);
+        selectedObject = null;
+    }
 }
 
 let oldTransformData = null; // 돌출 시작 시점의 상태 저장용
 
-// extrude 시작 시 extrudeBaseY 저장
+// === extrude 시작 시 extrudeBaseY 저장 ===
 let extrudeBaseY = null;
+// extrude 관련 그룹 undo/redo용 변수 추가
+let extrudeStackedObjects = [];
+let extrudeOldTransforms = [];
+function findStackedObjectsRecursive(baseObj, resultArr) {
+    // baseObj 위에 쌓인 도형들을 재귀적으로 resultArr에 추가
+    const myWidth = baseObj.geometry.parameters.width * baseObj.scale.x;
+    const myDepth = baseObj.geometry.parameters.depth * baseObj.scale.z;
+    const myMinX = baseObj.position.x - myWidth/2;
+    const myMaxX = baseObj.position.x + myWidth/2;
+    const myMinZ = baseObj.position.z - myDepth/2;
+    const myMaxZ = baseObj.position.z + myDepth/2;
+    const myTop = baseObj.position.y + (baseObj.geometry.parameters.height * baseObj.scale.y) / 2;
+    drawableObjects.forEach(obj => {
+        if (obj === baseObj || resultArr.includes(obj) || !obj.geometry) return;
+        const objWidth = obj.geometry.parameters.width * obj.scale.x;
+        const objDepth = obj.geometry.parameters.depth * obj.scale.z;
+        const objMinX = obj.position.x - objWidth/2;
+        const objMaxX = obj.position.x + objWidth/2;
+        const objMinZ = obj.position.z - objDepth/2;
+        const objMaxZ = obj.position.z + objDepth/2;
+        const overlapX = Math.max(0, Math.min(objMaxX, myMaxX) - Math.max(objMinX, myMinX));
+        const overlapZ = Math.max(0, Math.min(objMaxZ, myMaxZ) - Math.max(objMinZ, myMinZ));
+        const overlapRatioX = overlapX / Math.min(objWidth, myWidth);
+        const overlapRatioZ = overlapZ / Math.min(objDepth, myDepth);
+        const objHeight = obj.geometry.parameters.height * obj.scale.y;
+        const objBottom = obj.position.y - objHeight / 2;
+        if (overlapRatioX > 0.1 && overlapRatioZ > 0.1 && Math.abs(objBottom - myTop) < 0.15) {
+            resultArr.push(obj);
+            findStackedObjectsRecursive(obj, resultArr);
+        }
+    });
+}
 function onPointerDown(event) {
     if (event.button !== 0) return;
-    // drawingMode가 아닐 때는 바닥 그리기 동작 금지
     if (!drawingMode) return;
     
     clearTextureHighlight();
@@ -356,6 +454,14 @@ function onPointerDown(event) {
         const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
         extrudeBaseY = extrudeTarget.position.y - height/2;
         highlightMesh.visible = false;
+        // === 그룹 undo/redo용: 아래 도형 + 위에 쌓인 도형들 모두 old transform 저장 ===
+        extrudeStackedObjects = [extrudeTarget];
+        findStackedObjectsRecursive(extrudeTarget, extrudeStackedObjects);
+        extrudeOldTransforms = extrudeStackedObjects.map(obj => ({
+            geometry: obj.geometry.clone(),
+            position: obj.position.clone(),
+            scale: obj.scale.clone()
+        }));
         return;
     }
     // 1-2. 옆면(x축) extrude
@@ -400,6 +506,14 @@ function onPointerDown(event) {
             position: extrudeTarget.position.clone(),
             scale: extrudeTarget.scale.clone()
         };
+        // === 그룹 undo/redo용: 아래 도형 + 위에 쌓인 도형들 모두 old transform 저장 ===
+        extrudeStackedObjects = [extrudeTarget];
+        findStackedObjectsRecursive(extrudeTarget, extrudeStackedObjects);
+        extrudeOldTransforms = extrudeStackedObjects.map(obj => ({
+            geometry: obj.geometry.clone(),
+            position: obj.position.clone(),
+            scale: obj.scale.clone()
+        }));
         highlightMesh.visible = false;
         return;
     }
@@ -441,6 +555,14 @@ function onPointerDown(event) {
             position: extrudeTarget.position.clone(),
             scale: extrudeTarget.scale.clone()
         };
+        // === 그룹 undo/redo용: 아래 도형 + 위에 쌓인 도형들 모두 old transform 저장 ===
+        extrudeStackedObjects = [extrudeTarget];
+        findStackedObjectsRecursive(extrudeTarget, extrudeStackedObjects);
+        extrudeOldTransforms = extrudeStackedObjects.map(obj => ({
+            geometry: obj.geometry.clone(),
+            position: obj.position.clone(),
+            scale: obj.scale.clone()
+        }));
         highlightMesh.visible = false;
         return;
     }
@@ -761,87 +883,80 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
     if (isExtruding) {
-        const newWidth = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
-        const newHeight = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
-        const newDepth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
-        const newGeom = new THREE.BoxGeometry(newWidth, newHeight, newDepth);
-        // TransformCommand를 위한 새 상태
-        // extrudeBaseY가 있으면 그 기준으로 position.y 계산
-        const baseY = extrudeBaseY !== null ? extrudeBaseY : extrudeTarget.position.y - newHeight / 2;
-        const newTransformData = {
-            geometry: newGeom,
-            position: new THREE.Vector3(extrudeTarget.position.x, baseY + newHeight / 2, extrudeTarget.position.z),
-            scale: new THREE.Vector3(1, 1, 1)
-        };
-        // 현재 객체를 undo 상태로 되돌리고, command를 통해 redo 상태로 만듦
-        extrudeTarget.geometry.dispose();
-        extrudeTarget.geometry = oldTransformData.geometry;
-        extrudeTarget.position.copy(oldTransformData.position);
-        extrudeTarget.scale.copy(oldTransformData.scale);
-        const command = new TransformCommand(extrudeTarget, oldTransformData, newTransformData);
-        history.execute(command);
+        const extrudeNewTransforms = extrudeStackedObjects.map(obj => ({
+            geometry: obj.geometry.clone(),
+            position: obj.position.clone(),
+            scale: obj.scale.clone()
+        }));
+        // 기존 TransformCommand 대신 GroupTransformCommand로 기록
+        history.execute(new GroupTransformCommand(
+            extrudeStackedObjects,
+            extrudeOldTransforms,
+            extrudeNewTransforms
+        ));
         clearAxisGuideLines();
         isExtruding = false;
         extrudeTarget = null;
         controls.enabled = true;
         oldTransformData = null;
         extrudeBaseY = null;
+        extrudeStackedObjects = [];
+        extrudeOldTransforms = [];
         // === 크기 정보 숨김 ===
         const dimensionDiv = document.getElementById('dimension-info');
         if (dimensionDiv) {
             dimensionDiv.style.display = 'none';
         }
         // === 크기 정보 숨김 끝 ===
+        return;
     } else if (isExtrudingX) {
-        const newWidth = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
-        const newHeight = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
-        const newDepth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
-        const newGeom = new THREE.BoxGeometry(newWidth, newHeight, newDepth);
-        const newTransformData = {
-            geometry: newGeom,
-            position: new THREE.Vector3(extrudeTarget.position.x, extrudeTarget.position.y, extrudeTarget.position.z),
-            scale: new THREE.Vector3(1, 1, 1)
-        };
-        extrudeTarget.geometry.dispose();
-        extrudeTarget.geometry = oldTransformData.geometry;
-        extrudeTarget.position.copy(oldTransformData.position);
-        extrudeTarget.scale.copy(oldTransformData.scale);
-        const command = new TransformCommand(extrudeTarget, oldTransformData, newTransformData);
-        history.execute(command);
+        // extrudeX(옆면)도 그룹 커맨드로 처리
+        const extrudeNewTransforms = extrudeStackedObjects.map(obj => ({
+            geometry: obj.geometry.clone(),
+            position: obj.position.clone(),
+            scale: obj.scale.clone()
+        }));
+        history.execute(new GroupTransformCommand(
+            extrudeStackedObjects,
+            extrudeOldTransforms,
+            extrudeNewTransforms
+        ));
         clearAxisGuideLines();
         isExtrudingX = false;
         extrudeTarget = null;
         controls.enabled = true;
+        extrudeStackedObjects = [];
+        extrudeOldTransforms = [];
         // 정보창 숨김
         const dimensionDiv = document.getElementById('dimension-info');
         if (dimensionDiv) {
             dimensionDiv.style.display = 'none';
         }
+        return;
     } else if (isExtrudingZ) {
-        const newWidth = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
-        const newHeight = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
-        const newDepth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
-        const newGeom = new THREE.BoxGeometry(newWidth, newHeight, newDepth);
-        const newTransformData = {
-            geometry: newGeom,
-            position: new THREE.Vector3(extrudeTarget.position.x, extrudeTarget.position.y, extrudeTarget.position.z),
-            scale: new THREE.Vector3(1, 1, 1)
-        };
-        extrudeTarget.geometry.dispose();
-        extrudeTarget.geometry = oldTransformData.geometry;
-        extrudeTarget.position.copy(oldTransformData.position);
-        extrudeTarget.scale.copy(oldTransformData.scale);
-        const command = new TransformCommand(extrudeTarget, oldTransformData, newTransformData);
-        history.execute(command);
+        // extrudeZ(앞/뒤면)도 그룹 커맨드로 처리
+        const extrudeNewTransforms = extrudeStackedObjects.map(obj => ({
+            geometry: obj.geometry.clone(),
+            position: obj.position.clone(),
+            scale: obj.scale.clone()
+        }));
+        history.execute(new GroupTransformCommand(
+            extrudeStackedObjects,
+            extrudeOldTransforms,
+            extrudeNewTransforms
+        ));
         clearAxisGuideLines();
         isExtrudingZ = false;
         extrudeTarget = null;
         controls.enabled = true;
+        extrudeStackedObjects = [];
+        extrudeOldTransforms = [];
         // 정보창 숨김
         const dimensionDiv = document.getElementById('dimension-info');
         if (dimensionDiv) {
             dimensionDiv.style.display = 'none';
         }
+        return;
     } else if (isDrawing) {
         raycaster.setFromCamera(mouse, camera);
         const endPoint3D = new THREE.Vector3();
@@ -887,7 +1002,7 @@ function onPointerUp(event) {
             newBox.position.x = (snappedEndPoint.x + startPoint.x) / 2;
             newBox.position.z = (snappedEndPoint.z + startPoint.z) / 2;
             newBox.position.y = planeY + initialHeight / 2;
-
+            setShadowProps(newBox);
             // Command를 통해서만 객체를 추가
             const command = new AddObjectCommand(scene, newBox, drawableObjects);
             history.execute(command);
@@ -1344,6 +1459,11 @@ function animate() {
         highlightOverlayMesh.rotation.copy(selectedObject.rotation);
         highlightOverlayMesh.scale.copy(selectedObject.scale);
     }
+
+    // === 쌓인 도형 동기화 ===
+    for (let obj of drawableObjects) {
+        stickStackedObjects(obj);
+    }
 }
 
 animate(); 
@@ -1461,6 +1581,7 @@ window.addEventListener('DOMContentLoaded', () => {
             if (selectedObject) {
                 clearSelectedHighlight(selectedObject);
                 selectedObject = null;
+                renderObjectListPanel();
             }
             // === 모드 변경 시 스냅/가이드/프리뷰 등 모두 숨기기 ===
             if (typeof snapGuide !== 'undefined' && snapGuide) snapGuide.visible = false;
@@ -1510,6 +1631,7 @@ function clearSelectedHighlight(obj) {
         scene.remove(highlightOverlayMesh);
         highlightOverlayMesh = null;
     }
+    clipboard = null;
 }
 
 renderer.domElement.addEventListener('pointerdown', function(event) {
@@ -1537,12 +1659,14 @@ renderer.domElement.addEventListener('pointerdown', function(event) {
             }
             // 이동 시작 위치 저장
             selectStartPosition = selectedObject.position.clone();
+            renderObjectListPanel();
         } else {
             // 빈 공간 클릭 시 선택 해제
             if (selectedObject) clearSelectedHighlight(selectedObject);
             selectedObject = null;
             selectedFaceIndex = null;
             selectStartPosition = null;
+            renderObjectListPanel();
         }
     }
 });
@@ -1682,8 +1806,10 @@ window.addEventListener('keydown', function(event) {
         if (selectedObject) {
             clearSelectedHighlight(selectedObject);
             selectedObject = null;
+            renderObjectListPanel();
             selectedFaceIndex = null;
         }
+        clipboard = null;
         // === 스냅/가이드/프리뷰 등 모두 숨기기 ===
         if (typeof snapGuide !== 'undefined' && snapGuide) snapGuide.visible = false;
         if (typeof clearAxisGuideLines === 'function') clearAxisGuideLines();
@@ -1691,6 +1817,7 @@ window.addEventListener('keydown', function(event) {
             scene.remove(previewMesh);
             previewMesh = null;
         }
+        hideContextMenu();
     }
 }); 
 
@@ -1731,7 +1858,9 @@ function showSelectSnapGuideLine(axis, position, centerPos, size) {
 // 이동(드래그) Undo/Redo를 위한 위치 저장 변수
 let selectStartPosition = null;
 
-function stickStackedObjects(baseObj) {
+function stickStackedObjects(baseObj, visitedSet = new Set()) {
+    if (visitedSet.has(baseObj)) return;
+    visitedSet.add(baseObj);
     const myWidth = baseObj.geometry.parameters.width * baseObj.scale.x;
     const myDepth = baseObj.geometry.parameters.depth * baseObj.scale.z;
     const myMinX = baseObj.position.x - myWidth/2;
@@ -1758,7 +1887,404 @@ function stickStackedObjects(baseObj) {
         const objBottom = obj.position.y - objHeight / 2;
         if (overlapRatioX > 0.1 && overlapRatioZ > 0.1 && Math.abs(objBottom - myTop) < 0.15) {
             obj.position.y = myTop + objHeight / 2;
-            stickStackedObjects(obj); // 위에 또 얹힌 도형도 반복
+            stickStackedObjects(obj, visitedSet); // 위에 또 얹힌 도형도 반복
         }
     });
 }
+
+// === 복사/붙여넣기용 clipboard ===
+let clipboard = null;
+function deepCloneMesh(mesh) {
+    // geometry 복제
+    const geometry = mesh.geometry.clone();
+    // material 복제 (배열/단일 모두 지원)
+    let material;
+    if (Array.isArray(mesh.material)) {
+        material = mesh.material.map(m => m.clone());
+    } else {
+        material = mesh.material.clone();
+    }
+    // mesh 복제
+    const clone = new THREE.Mesh(geometry, material);
+    clone.position.copy(mesh.position);
+    clone.rotation.copy(mesh.rotation);
+    clone.scale.copy(mesh.scale);
+    // userData 등 추가 속성 복사(필요시)
+    clone.userData = JSON.parse(JSON.stringify(mesh.userData));
+    setShadowProps(clone);
+    return clone;
+}
+window.addEventListener('keydown', function(event) {
+    // 입력 필드에 있을 때는 작동하지 않도록
+    if (event.target.tagName && (event.target.tagName.toUpperCase() === 'INPUT' || event.target.tagName.toUpperCase() === 'TEXTAREA')) {
+        return;
+    }
+    // ctrl+c: 복사
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
+        if (selectedObject) {
+            clipboard = selectedObject;
+        }
+    }
+    // ctrl+v: 붙여넣기
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') {
+        if (clipboard) {
+            selectedObject = null; // 먼저 해제
+            const newObj = deepCloneMesh(clipboard);
+            // AddObjectCommand로 history에 추가
+            const command = new AddObjectCommand(scene, newObj, drawableObjects);
+            history.execute(command);
+        }
+    }
+});
+
+function setShadowProps(mesh) {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    if (Array.isArray(mesh.children)) {
+        mesh.children.forEach(setShadowProps);
+    }
+}
+
+// === 조명 on/off 및 조이스틱 UI ===
+const lightToggle = document.getElementById('light-toggle');
+const lightToggleLabel = document.getElementById('light-toggle-label');
+const lightJoystick = document.getElementById('light-joystick');
+const shadowGroundMesh = typeof shadowGround !== 'undefined' ? shadowGround : null;
+
+function setLightUIState(on) {
+    directionalLight.visible = on;
+    if (shadowGroundMesh) shadowGroundMesh.visible = on;
+    renderer.shadowMap.enabled = on;
+    // === hemisphere light 연동 ===
+    hemisphereLight.visible = !on;
+    if (on) {
+        lightToggleLabel.textContent = '조명 ON';
+        lightJoystick.classList.remove('disabled');
+    } else {
+        lightToggleLabel.textContent = '조명 OFF';
+        lightJoystick.classList.add('disabled');
+    }
+}
+if (lightToggle) {
+    lightToggle.addEventListener('change', function() {
+        setLightUIState(lightToggle.checked);
+    });
+    // 초기 상태 동기화
+    setLightUIState(lightToggle.checked);
+}
+// === 조이스틱 ===
+let joystickDragging = false;
+let joystickCenter = { x: 45, y: 45 };
+let joystickRadius = 40;
+let joystickKnobRadius = 13;
+// directionalLight의 x/z 위치를 [-max, max] 범위로 매핑
+const lightMaxXZ = 15;
+function drawJoystick() {
+    const ctx = lightJoystick.getContext('2d');
+    ctx.clearRect(0, 0, 90, 90);
+    // 배경 원
+    ctx.beginPath();
+    ctx.arc(joystickCenter.x, joystickCenter.y, joystickRadius, 0, Math.PI * 2);
+    ctx.fillStyle = '#f4f6fa';
+    ctx.fill();
+    ctx.strokeStyle = '#e0e0e0';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // crosshair
+    ctx.beginPath();
+    ctx.moveTo(joystickCenter.x - joystickRadius + 8, joystickCenter.y);
+    ctx.lineTo(joystickCenter.x + joystickRadius - 8, joystickCenter.y);
+    ctx.moveTo(joystickCenter.x, joystickCenter.y - joystickRadius + 8);
+    ctx.lineTo(joystickCenter.x, joystickCenter.y + joystickRadius - 8);
+    ctx.strokeStyle = '#d0d0d0';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 조작점 위치 계산
+    let lx = directionalLight.position.x;
+    let lz = directionalLight.position.z;
+    let knobX = joystickCenter.x + (lx / lightMaxXZ) * (joystickRadius - 13);
+    let knobY = joystickCenter.y + (lz / lightMaxXZ) * (joystickRadius - 13);
+    // 조작점
+    ctx.beginPath();
+    ctx.arc(knobX, knobY, joystickKnobRadius, 0, Math.PI * 2);
+    ctx.fillStyle = '#0078ff';
+    // === 수정: lightToggle이 없으면 directionalLight.visible로 판단 ===
+    const isLightOn = (typeof lightToggle !== 'undefined' && lightToggle) ? lightToggle.checked : directionalLight.visible;
+    ctx.globalAlpha = isLightOn ? 1 : 0.5;
+    ctx.shadowColor = '#0078ff';
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+}
+if (lightJoystick) {
+    drawJoystick();
+    let dragging = false;
+    let dragOffset = { x: 0, y: 0 };
+    function getJoystickPos(e) {
+        const rect = lightJoystick.getBoundingClientRect();
+        const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+        return { x, y };
+    }
+    function updateLightFromJoystick(x, y) {
+        // 중심에서의 상대 좌표를 [-1,1]로 변환 후 lightMaxXZ로 매핑
+        let dx = x - joystickCenter.x;
+        let dy = y - joystickCenter.y;
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist > joystickRadius - 13) {
+            dx *= (joystickRadius - 13) / dist;
+            dy *= (joystickRadius - 13) / dist;
+        }
+        // x축: 오른쪽이 +, z축: 아래가 +
+        let lx = (dx / (joystickRadius - 13)) * lightMaxXZ;
+        let lz = (dy / (joystickRadius - 13)) * lightMaxXZ;
+        directionalLight.position.x = lx;
+        directionalLight.position.z = lz;
+        drawJoystick();
+    }
+    lightJoystick.addEventListener('mousedown', function(e) {
+        // === 수정: lightToggle이 없으면 directionalLight.visible로 판단 ===
+        const isLightOn = (typeof lightToggle !== 'undefined' && lightToggle) ? lightToggle.checked : directionalLight.visible;
+        if (!isLightOn) return;
+        dragging = true;
+        const pos = getJoystickPos(e);
+        updateLightFromJoystick(pos.x, pos.y);
+    });
+    lightJoystick.addEventListener('touchstart', function(e) {
+        const isLightOn = (typeof lightToggle !== 'undefined' && lightToggle) ? lightToggle.checked : directionalLight.visible;
+        if (!isLightOn) return;
+        dragging = true;
+        const pos = getJoystickPos(e);
+        updateLightFromJoystick(pos.x, pos.y);
+    });
+    window.addEventListener('mousemove', function(e) {
+        const isLightOn = (typeof lightToggle !== 'undefined' && lightToggle) ? lightToggle.checked : directionalLight.visible;
+        if (!dragging) return;
+        if (!isLightOn) return;
+        const pos = getJoystickPos(e);
+        updateLightFromJoystick(pos.x, pos.y);
+    });
+    window.addEventListener('touchmove', function(e) {
+        const isLightOn = (typeof lightToggle !== 'undefined' && lightToggle) ? lightToggle.checked : directionalLight.visible;
+        if (!dragging) return;
+        if (!isLightOn) return;
+        const pos = getJoystickPos(e);
+        updateLightFromJoystick(pos.x, pos.y);
+    });
+    window.addEventListener('mouseup', function(e) {
+        dragging = false;
+    });
+    window.addEventListener('touchend', function(e) {
+        dragging = false;
+    });
+    // 그림자 on/off 시 UI 동기화
+    if (typeof lightToggle !== 'undefined' && lightToggle) {
+        lightToggle.addEventListener('change', drawJoystick);
+    }
+}
+// directionalLight 위치가 바뀌면 매 프레임 drawJoystick으로 UI 동기화
+let lastLightX = directionalLight.position.x, lastLightZ = directionalLight.position.z;
+function syncJoystickToLight() {
+    if (directionalLight.position.x !== lastLightX || directionalLight.position.z !== lastLightZ) {
+        drawJoystick();
+        lastLightX = directionalLight.position.x;
+        lastLightZ = directionalLight.position.z;
+    }
+    requestAnimationFrame(syncJoystickToLight);
+}
+syncJoystickToLight();
+
+// === light-panel 위치를 axis-orbit 위쪽(캔버스 우하단)으로 동적으로 유지 ===
+function updateLightPanelPosition() {
+    const cWrapper = document.getElementById('c-wrapper');
+    const axisOrbit = document.getElementById('axis-orbit');
+    const lightPanel = document.getElementById('light-panel');
+    if (!cWrapper || !axisOrbit || !lightPanel) return;
+    // cWrapper 기준 상대 위치 계산
+    const wrapperRect = cWrapper.getBoundingClientRect();
+    const axisRect = axisOrbit.getBoundingClientRect();
+    // axis-orbit의 위쪽에, 오른쪽 정렬
+    const offsetRight = wrapperRect.right - axisRect.right + 8; // 8px 여유
+    const offsetBottom = wrapperRect.bottom - axisRect.top + 12; // 12px 여유
+    lightPanel.style.right = offsetRight + 'px';
+    lightPanel.style.bottom = offsetBottom + 'px';
+}
+window.addEventListener('resize', updateLightPanelPosition);
+window.addEventListener('DOMContentLoaded', updateLightPanelPosition);
+setTimeout(updateLightPanelPosition, 200); // 초기 렌더 후 보정
+// axis-orbit 크기 변동(반응형)에도 대응
+const axisOrbit = document.getElementById('axis-orbit');
+if (axisOrbit) {
+    new ResizeObserver(updateLightPanelPosition).observe(axisOrbit);
+}
+
+// === '조명 보기' 드롭다운 메뉴와 조이스틱 UI 연동 ===
+const toggleLightMenu = document.getElementById('toggle-light');
+function setLightMenuState(on) {
+    directionalLight.visible = on;
+    if (typeof shadowGround !== 'undefined') shadowGround.visible = on;
+    renderer.shadowMap.enabled = on;
+    // === hemisphere light 연동 ===
+    hemisphereLight.visible = !on;
+    if (on) {
+        lightJoystick.classList.remove('disabled');
+        toggleLightMenu.querySelector('.check').textContent = '✓';
+    } else {
+        lightJoystick.classList.add('disabled');
+        toggleLightMenu.querySelector('.check').textContent = '';
+    }
+}
+if (toggleLightMenu) {
+    toggleLightMenu.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const isOn = !toggleLightMenu.querySelector('.check').textContent;
+        setLightMenuState(isOn);
+    });
+    // 초기 상태 동기화
+    setLightMenuState(true);
+}
+
+// === 객체 목록 패널 동적 렌더링 ===
+function renderObjectListPanel() {
+    const panel = document.getElementById('object-list-panel');
+    if (!panel) return;
+    // 패널 초기화
+    panel.innerHTML = '<div style="font-weight:bold;font-size:18px;padding:0 18px 12px 18px;">객체 목록</div>';
+    if (drawableObjects.length === 0) {
+        panel.innerHTML += '<div style="padding:18px;color:#888;">생성된 객체가 없습니다.</div>';
+        return;
+    }
+    const list = document.createElement('ul');
+    list.style.listStyle = 'none';
+    list.style.padding = '0 0 0 0';
+    list.style.margin = '0';
+    drawableObjects.forEach((obj, idx) => {
+        const li = document.createElement('li');
+        li.className = 'object-list-item';
+        li.style.padding = '10px 18px';
+        li.style.cursor = 'pointer';
+        li.style.borderBottom = '1px solid #f0f0f0';
+        li.style.transition = 'background 0.15s';
+        // 이름 또는 번호
+        let label = obj.userData && obj.userData.name ? obj.userData.name : `객체 ${idx+1}`;
+        // 크기 정보
+        let w = (obj.geometry.parameters.width * obj.scale.x).toFixed(2);
+        let h = (obj.geometry.parameters.height * obj.scale.y).toFixed(2);
+        let d = (obj.geometry.parameters.depth * obj.scale.z).toFixed(2);
+        li.innerHTML = `<b>${label}</b><br><span style='font-size:13px;color:#888;'>크기: ${w} × ${d} × ${h}</span>`;
+
+        // --- 마우스 오버/아웃 하이라이트 ---
+        li.addEventListener('mouseenter', () => {
+            if (!obj.userData._origMaterialColors) {
+                // 원래 색상 저장
+                obj.userData._origMaterialColors = obj.material.map(m => m.color.clone());
+            }
+            obj.material.forEach(m => {
+                m.color.set(0xffe066); // 밝은 노란색
+                m.needsUpdate = true;
+            });
+        });
+        li.addEventListener('mouseleave', () => {
+            if (obj.userData._origMaterialColors) {
+                obj.material.forEach((m, i) => {
+                    m.color.copy(obj.userData._origMaterialColors[i]);
+                    m.needsUpdate = true;
+                });
+                delete obj.userData._origMaterialColors;
+            }
+        });
+        // --- 끝 ---
+
+        // 활성화 표시 및 스크롤 포커스
+        if (selectedObject && selectedObject.uuid === obj.uuid) {
+            li.classList.add('active');
+            setTimeout(() => { li.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 0);
+        }
+        // --- 클릭 시 선택 동기화 ---
+        li.addEventListener('click', () => {
+            if (selectedObject && selectedObject.uuid === obj.uuid) {
+                // 이미 선택된 항목을 다시 클릭하면 선택 해제
+                clearSelectedHighlight(selectedObject);
+                selectedObject = null;
+                renderObjectListPanel();
+                return;
+            }
+            if (selectedObject && selectedObject.uuid !== obj.uuid) {
+                clearSelectedHighlight(selectedObject);
+            }
+            selectedObject = obj;
+            highlightSelected(selectedObject);
+            renderObjectListPanel(); // 목록 활성화 갱신
+            // === 카메라 이동(포커스) 기능 추가 ===
+            // 현재 카메라와 타겟의 상대 벡터
+            const camToTarget = camera.position.clone().sub(controls.target);
+            // 선택 객체를 중심으로 동일한 상대 벡터를 적용
+            cameraTargetPos = obj.position.clone().add(camToTarget);
+            cameraTargetLook = obj.position.clone();
+            isCameraAnimating = true;
+        });
+        // --- 끝 ---
+
+        list.appendChild(li);
+    });
+    panel.appendChild(list);
+}
+// 객체 추가/삭제/undo/redo 시 자동 갱신
+function setupObjectListPanelAutoUpdate() {
+    // history.execute, undo, redo 후에 renderObjectListPanel 호출
+    const origExecute = history.execute.bind(history);
+    history.execute = function(cmd) {
+        origExecute(cmd);
+        renderObjectListPanel();
+    };
+    const origUndo = history.undo.bind(history);
+    history.undo = function() {
+        origUndo();
+        renderObjectListPanel();
+    };
+    const origRedo = history.redo.bind(history);
+    history.redo = function() {
+        origRedo();
+        renderObjectListPanel();
+    };
+}
+window.addEventListener('DOMContentLoaded', () => {
+    renderObjectListPanel();
+    setupObjectListPanelAutoUpdate();
+    const objectListToggle = document.getElementById('object-list-toggle');
+    const objectListPanel = document.getElementById('object-list-panel');
+    if (objectListToggle && objectListPanel) {
+        // 햄버거/X 아이콘 전환 애니메이션(즉시 교체, CSS로만 전환)
+        function setHamburgerIcon(isMenu) {
+            objectListToggle.innerHTML = isMenu ? "<span data-feather='menu'></span>" : "<span data-feather='x'></span>";
+            if (window.feather) window.feather.replace();
+        }
+        setHamburgerIcon(true);
+        objectListToggle.addEventListener('click', () => {
+            if (objectListPanel.classList.contains('show')) {
+                // 사라질 때 애니메이션 적용
+                objectListPanel.classList.remove('show');
+                objectListPanel.classList.add('hide');
+                setHamburgerIcon(true);
+                // 애니메이션 끝나면 display:none 및 .hide 제거
+                objectListPanel.addEventListener('animationend', function handler(e) {
+                    if (e.animationName === 'slideOutLeft') {
+                        objectListPanel.style.display = 'none';
+                        objectListPanel.classList.remove('hide');
+                    }
+                    objectListPanel.removeEventListener('animationend', handler);
+                });
+            } else {
+                objectListPanel.style.display = 'block';
+                objectListPanel.classList.remove('hide');
+                objectListPanel.classList.add('show');
+                setHamburgerIcon(false);
+                renderObjectListPanel();
+            }
+        });
+    }
+});

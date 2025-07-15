@@ -35,6 +35,9 @@ class AddObjectCommand extends Command {
 class TransformCommand extends Command {
     constructor(object, oldTransform, newTransform) {
         super();
+        if (object.userData && object.userData.isStacked) {
+            throw new Error('Stacked object 커맨드 생성 차단');
+        }
         this.object = object;
         this.oldTransform = oldTransform;
         this.newTransform = newTransform;
@@ -82,6 +85,9 @@ class TextureCommand extends Command {
 class SelectObjectCommand extends Command {
     constructor(object, oldSelection, newSelection) {
         super();
+        if (object.userData && object.userData.isStacked) {
+            throw new Error('Stacked object 커맨드 생성 차단');
+        }
         this.object = object;
         this.oldSelection = oldSelection;
         this.newSelection = newSelection;
@@ -93,6 +99,34 @@ class SelectObjectCommand extends Command {
 
     undo() {
         this.object.position.copy(this.oldSelection);
+    }
+}
+
+// 여러 객체의 변형을 하나의 커맨드로 묶는 GroupTransformCommand
+class GroupTransformCommand extends Command {
+    constructor(objects, oldTransforms, newTransforms) {
+        super();
+        this.objects = objects;
+        this.oldTransforms = oldTransforms;
+        this.newTransforms = newTransforms;
+    }
+    execute() {
+        this.objects.forEach((obj, i) => {
+            obj.geometry.dispose();
+            obj.geometry = this.newTransforms[i].geometry;
+            obj.position.copy(this.newTransforms[i].position);
+            obj.scale.copy(this.newTransforms[i].scale);
+            obj.material.needsUpdate = true;
+        });
+    }
+    undo() {
+        this.objects.forEach((obj, i) => {
+            obj.geometry.dispose();
+            obj.geometry = this.oldTransforms[i].geometry;
+            obj.position.copy(this.oldTransforms[i].position);
+            obj.scale.copy(this.oldTransforms[i].scale);
+            obj.material.needsUpdate = true;
+        });
     }
 }
 
