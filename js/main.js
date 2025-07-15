@@ -539,6 +539,7 @@ function onPointerMove(event) {
         const newScaleY = newHeight / extrudeTarget.geometry.parameters.height;
         extrudeTarget.position.y = extrudeBaseY + newHeight / 2;
         extrudeTarget.scale.y = newScaleY;
+        stickStackedObjects(extrudeTarget); // 아래 도형 extrude 시 위 도형 붙이기
         // === 크기 정보 마우스 따라다니며 표시 (Extrude) ===
         const width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
         const depth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
@@ -1595,7 +1596,7 @@ renderer.domElement.addEventListener('pointermove', function(event) {
             if (snappedX) newPos.x = snapX;
             if (snappedZ) newPos.z = snapZ;
             // === 쌓기(y축) ===
-            // 마우스 아래에 도형이 있으면, 내 도형의 x/z 중심이 그 도형의 x/z 평면 범위 안에 들어가면 쌓기
+            // 마우스 아래에 도형이 있으면, 내 도형의 x/z 바닥 평면이 그 도형의 x/z 평면과 겹치면 쌓기
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(drawableObjects.filter(obj => obj !== selectedObject));
             if (intersects.length > 0) {
@@ -1604,13 +1605,20 @@ renderer.domElement.addEventListener('pointermove', function(event) {
                 const underDepth = underObj.geometry.parameters.depth * underObj.scale.z;
                 const underHeight = underObj.geometry.parameters.height * underObj.scale.y;
                 const underTop = underObj.position.y + underHeight/2;
-                // 내 도형의 x/z 중심이 아래 도형의 x/z 평면 범위 안에 들어가는지 체크
-                if (
-                    newPos.x > underObj.position.x - underWidth/2 &&
-                    newPos.x < underObj.position.x + underWidth/2 &&
-                    newPos.z > underObj.position.z - underDepth/2 &&
-                    newPos.z < underObj.position.z + underDepth/2
-                ) {
+                // 내 도형의 x/z 바닥 평면 범위
+                const myMinX = newPos.x - myWidth/2;
+                const myMaxX = newPos.x + myWidth/2;
+                const myMinZ = newPos.z - myDepth/2;
+                const myMaxZ = newPos.z + myDepth/2;
+                // 아래 도형의 x/z 평면 범위
+                const underMinX = underObj.position.x - underWidth/2;
+                const underMaxX = underObj.position.x + underWidth/2;
+                const underMinZ = underObj.position.z - underDepth/2;
+                const underMaxZ = underObj.position.z + underDepth/2;
+                // x, z축으로 겹치는지 확인
+                const isOverlapX = myMaxX > underMinX && myMinX < underMaxX;
+                const isOverlapZ = myMaxZ > underMinZ && myMinZ < underMaxZ;
+                if (isOverlapX && isOverlapZ) {
                     newPos.y = underTop + myHeight/2;
                 } else {
                     // 바닥에 붙이기
@@ -1722,3 +1730,35 @@ function showSelectSnapGuideLine(axis, position, centerPos, size) {
 
 // 이동(드래그) Undo/Redo를 위한 위치 저장 변수
 let selectStartPosition = null;
+
+function stickStackedObjects(baseObj) {
+    const myWidth = baseObj.geometry.parameters.width * baseObj.scale.x;
+    const myDepth = baseObj.geometry.parameters.depth * baseObj.scale.z;
+    const myMinX = baseObj.position.x - myWidth/2;
+    const myMaxX = baseObj.position.x + myWidth/2;
+    const myMinZ = baseObj.position.z - myDepth/2;
+    const myMaxZ = baseObj.position.z + myDepth/2;
+    const myTop = baseObj.position.y + (baseObj.geometry.parameters.height * baseObj.scale.y) / 2;
+
+    drawableObjects.forEach(obj => {
+        if (obj === baseObj || !obj || !obj.geometry) return;
+        const objWidth = obj.geometry.parameters.width * obj.scale.x;
+        const objDepth = obj.geometry.parameters.depth * obj.scale.z;
+        const objMinX = obj.position.x - objWidth/2;
+        const objMaxX = obj.position.x + objWidth/2;
+        const objMinZ = obj.position.z - objDepth/2;
+        const objMaxZ = obj.position.z + objDepth/2;
+        // xz축 겹침
+        const overlapX = Math.max(0, Math.min(objMaxX, myMaxX) - Math.max(objMinX, myMinX));
+        const overlapZ = Math.max(0, Math.min(objMaxZ, myMaxZ) - Math.max(objMinZ, myMinZ));
+        const overlapRatioX = overlapX / Math.min(objWidth, myWidth);
+        const overlapRatioZ = overlapZ / Math.min(objDepth, myDepth);
+        // obj가 baseObj 위에 있는지(바닥이 baseObj의 top과 거의 같음)
+        const objHeight = obj.geometry.parameters.height * obj.scale.y;
+        const objBottom = obj.position.y - objHeight / 2;
+        if (overlapRatioX > 0.1 && overlapRatioZ > 0.1 && Math.abs(objBottom - myTop) < 0.15) {
+            obj.position.y = myTop + objHeight / 2;
+            stickStackedObjects(obj); // 위에 또 얹힌 도형도 반복
+        }
+    });
+}
