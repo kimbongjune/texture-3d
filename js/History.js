@@ -130,6 +130,44 @@ class GroupTransformCommand extends Command {
     }
 }
 
+// 여러 객체의 위치를 하나의 커맨드로 묶는 SelectGroupCommand (이동용)
+class SelectGroupCommand extends Command {
+    constructor(objects, oldPositions, newPositions) {
+        super();
+        this.objects = objects;
+        this.oldPositions = oldPositions;
+        this.newPositions = newPositions;
+    }
+    execute() {
+        this.objects.forEach((obj, i) => {
+            obj.position.copy(this.newPositions[i]);
+        });
+    }
+    undo() {
+        this.objects.forEach((obj, i) => {
+            obj.position.copy(this.oldPositions[i]);
+        });
+    }
+}
+
+// 5. 객체 회전 Command
+class RotationCommand extends Command {
+    constructor(object, oldRotation, newRotation) {
+        super();
+        this.object = object;
+        this.oldRotation = oldRotation;
+        this.newRotation = newRotation;
+    }
+
+    execute() {
+        this.object.rotation.copy(this.newRotation);
+    }
+
+    undo() {
+        this.object.rotation.copy(this.oldRotation);
+    }
+}
+
 // History 관리 클래스
 class History {
     constructor() {
@@ -160,9 +198,9 @@ class History {
             const command = this.redoStack.pop();
             command.execute();
             this.undoStack.push(command);
-            console.log("Redo, Undo stack size:", this.undoStack.length);
+            console.log("Redo, Undo stack size:", this.redoStack.length);
         } else {
             console.log("Nothing to redo.");
         }
     }
-} 
+}

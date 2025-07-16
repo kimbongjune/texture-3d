@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 let drawingMode = true;
 let moveMode = false;
@@ -11,6 +12,10 @@ let highlightOverlayMesh = null;
 const snapDistance = 0.5; // 스냅이 활성화되는 최대 거리
 let snapGuide = null; // 스냅 위치를 시각적으로 보여주는 도우미
 let allVertices = []; // 스냅 대상이 되는 모든 꼭짓점
+
+// 카메라 방향 표시를 위한 변수
+let cameraDirectionCanvas = null;
+let cameraDirectionCtx = null;
 
 // 1. 기본 설정
 const canvas = document.querySelector('#c');
@@ -25,6 +30,38 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 // controls 생성 전에는 camera만 초기화
 
 const controls = new OrbitControls(camera, renderer.domElement);
+
+// TransformControls 초기화
+const transformControls = new TransformControls(camera, renderer.domElement);
+scene.add(transformControls);
+transformControls.size = 1.5; // 회전 가이드 크기 조정
+
+transformControls.addEventListener('mouseDown', function () {
+    controls.enabled = false;
+});
+
+let oldRotation = null;
+transformControls.addEventListener('objectChange', function () {
+    if (selectedObject && transformControls.dragging) {
+        if (oldRotation === null) {
+            oldRotation = selectedObject.rotation.clone();
+        }
+    }
+});
+
+transformControls.addEventListener('mouseUp', function () {
+    if (selectedObject && oldRotation !== null) {
+        const newRotation = selectedObject.rotation.clone();
+        if (!oldRotation.equals(newRotation)) {
+            history.execute(new RotationCommand(selectedObject, oldRotation, newRotation));
+        }
+        oldRotation = null;
+    }
+    // 회전 모드일 때 TransformControls 작업이 끝나면 OrbitControls를 다시 활성화
+    if (rotateMode) {
+        controls.enabled = true;
+    }
+});
 controls.enableDamping = false; // 댐핑 비활성화
 controls.mouseButtons = {
 	LEFT: null, // 좌클릭은 그리기를 위해 비활성화
@@ -156,6 +193,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 texturePalette.addEventListener('click', (event) => {
+    // 그리기 모드(drawingMode)가 아닐 때는 텍스처 선택을 허용하지 않음
+    if (!drawingMode) {
+        return;
+    }
+
     if (event.target.classList.contains('texture-option')) {
         const currentlyActive = texturePalette.querySelector('.active');
         
@@ -215,6 +257,12 @@ window.addEventListener('keydown', (event) => {
         return;
     }
 
+    // 특정 작업이 진행 중일 때는 모드 전환 단축키 비활성화
+    if (isDrawing || isExtruding || isExtrudingX || isExtrudingZ || isDraggingSelected || transformControls.dragging) {
+        return;
+    }
+
+    // Ctrl/Cmd + Z/Y (Undo/Redo) 처리
     if (event.ctrlKey || event.metaKey) {
         if (event.key.toLowerCase() === 'z') {
             event.preventDefault();
@@ -223,6 +271,23 @@ window.addEventListener('keydown', (event) => {
             event.preventDefault();
             history.redo();
         }
+    }
+
+    // 모드 전환 단축키 처리
+    const toolSelectBtn = document.getElementById('tool-select'); // 선택 모드 (c)
+    const toolRefreshBtn = document.getElementById('tool-refresh'); // 회전 모드 (r)
+    const toolScaleBtn = document.getElementById('tool-scale'); // 그리기 모드 (d)
+
+    switch (event.key.toLowerCase()) {
+        case 'r':
+            if (toolRefreshBtn) toolRefreshBtn.click();
+            break;
+        case 's':
+            if (toolSelectBtn) toolSelectBtn.click();
+            break;
+        case 'd':
+            if (toolScaleBtn) toolScaleBtn.click();
+            break;
     }
 });
 
@@ -646,9 +711,7 @@ function onPointerMove(event) {
             const geometry = new THREE.SphereGeometry(0.05, 16, 16);
             const material = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.7 });
             snapGuide = new THREE.Mesh(geometry, material);
-            snapGuide.visible = false;
-            scene.add(snapGuide);
-        }
+           }
         if (snapTargetY !== null) {
             // 스냅: 면에 딱 맞게 붙임 + 가이드 표시
             newHeight = Math.abs(snapTargetY - extrudeBaseY);
@@ -661,7 +724,14 @@ function onPointerMove(event) {
         const newScaleY = newHeight / extrudeTarget.geometry.parameters.height;
         extrudeTarget.position.y = extrudeBaseY + newHeight / 2;
         extrudeTarget.scale.y = newScaleY;
-        stickStackedObjects(extrudeTarget); // 아래 도형 extrude 시 위 도형 붙이기
+        
+        let lastTop = extrudeBaseY + newHeight;
+        for (let i = 1; i < extrudeStackedObjects.length; i++) {
+            const objToMove = extrudeStackedObjects[i];
+            const objHeight = objToMove.geometry.parameters.height * objToMove.scale.y;
+            objToMove.position.y = lastTop + objHeight / 2;
+            lastTop += objHeight;
+        }
         // === 크기 정보 마우스 따라다니며 표시 (Extrude) ===
         const width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
         const depth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
@@ -872,12 +942,14 @@ function onPointerMove(event) {
             }
             // === 크기 정보 표시 끝 ===
         }
-    } else {
-        // IDLE 상태일 때만 하이라이트 처리
+    } else if (drawingMode) { // 그리기 모드일 때만 하이라이트 처리 (그리기/돌출 중이 아닐 때)
         updateHighlight();
         if (isTexturingMode) {
             updateTextureHighlight();
         }
+    } else { // 다른 모드 (이동, 회전)일 때는 하이라이트 끄기
+        if(highlightMesh) highlightMesh.visible = false;
+        clearTextureHighlight();
     }
 }
 
@@ -1023,11 +1095,6 @@ function onPointerUp(event) {
 }
 
 function updateHighlight() {
-    if (isDrawing || isExtruding || isExtrudingX || isExtrudingZ || moveMode) { // moveMode 추가
-        if(highlightMesh) highlightMesh.visible = false;
-        return;
-    }
-    
     raycaster.setFromCamera(mouse, camera);
     const intersects = raycaster.intersectObjects(drawableObjects);
 
@@ -1035,52 +1102,87 @@ function updateHighlight() {
     if (intersects.length > 0) {
         const intersection = intersects[0];
         const face = intersection.face;
-        // 윗면(y축), 옆면(x축), 앞/뒤면(z축)도 하이라이트
+        const object = intersection.object;
+
+        // 윗면(y축), 옆면(x축), 앞/뒤면(z축)만 하이라이트
         if (face.normal.y > 0.99 || Math.abs(face.normal.x) > 0.99 || Math.abs(face.normal.z) > 0.99) {
             hovered = true;
-            const object = intersection.object;
 
             if (!highlightMesh) {
-                const highlightMaterial = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+                const highlightMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthTest: false });
                 const highlightGeometry = new THREE.PlaneGeometry(1, 1);
                 highlightMesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
-                highlightMesh.rotation.x = -Math.PI / 2;
-                scene.add(highlightMesh); // 항상 scene에 추가
+                highlightMesh.renderOrder = 9999; // 항상 최상단에 렌더링
+                scene.add(highlightMesh);
+            }
+
+            // Set highlight color based on face normal
+            if (face.normal.y > 0.99 || face.normal.y < -0.99) { // Top or Bottom face
+                highlightMesh.material.color.set(0x00ff00); // Green for Y-axis
+            } else if (Math.abs(face.normal.x) > 0.99) { // Side face (X-axis)
+                highlightMesh.material.color.set(0xff0000); // Red for X-axis
+            } else if (Math.abs(face.normal.z) > 0.99) { // Side face (Z-axis)
+                highlightMesh.material.color.set(0x0000ff); // Blue for Z-axis
             }
             
-            const targetWidth = object.geometry.parameters.width * object.scale.x;
-            const targetHeight = object.geometry.parameters.height * object.scale.y;
-            const targetDepth = object.geometry.parameters.depth * object.scale.z;
+            // 객체의 월드 변환을 최신 상태로 업데이트
+            object.updateMatrixWorld();
 
-            // 윗면(y축) 하이라이트: 기존처럼 위에 평면
-            if (face.normal.y > 0.99) {
-                highlightMesh.material.color.set(0x00aaff); // 파란색
-                highlightMesh.position.set(object.position.x, object.position.y + targetHeight / 2 + 0.01, object.position.z);
-                highlightMesh.scale.set(targetWidth, targetDepth, 1);
-                highlightMesh.rotation.set(-Math.PI / 2, 0, 0);
-            } else if (Math.abs(face.normal.x) > 0.99) {
-                // 옆면(x축) 하이라이트: 옆에 평면
-                highlightMesh.material.color.set(0xff9900); // 주황색
-                const sign = face.normal.x > 0 ? 1 : -1;
-                highlightMesh.position.set(object.position.x + sign * targetWidth / 2 + 0.01 * sign, object.position.y, object.position.z);
-                highlightMesh.scale.set(targetDepth, targetHeight, 1);
-                highlightMesh.rotation.set(0, 0, 0); // xz 평면
-                highlightMesh.rotation.y = Math.PI / 2 * sign;
-            } else if (Math.abs(face.normal.z) > 0.99) {
-                // 앞/뒤면(z축) 하이라이트: 앞/뒤에 평면
-                highlightMesh.material.color.set(0x00ff44); // 초록색(예시)
-                const sign = face.normal.z > 0 ? 1 : -1;
-                highlightMesh.position.set(object.position.x, object.position.y, object.position.z + sign * targetDepth / 2 + 0.01 * sign);
-                highlightMesh.scale.set(targetWidth, targetHeight, 1);
-                highlightMesh.rotation.set(0, 0, 0);
-                highlightMesh.rotation.y = 0;
+            // Calculate world face normal
+            const worldFaceNormal = face.normal.clone().applyQuaternion(object.quaternion).normalize();
+
+            // Get the local dimensions of the object
+            const originalWidth = object.geometry.parameters.width;
+            const originalHeight = object.geometry.parameters.height;
+            const originalDepth = object.geometry.parameters.depth;
+
+            // Calculate the local center of the intersected face
+            let faceCenterLocal = new THREE.Vector3();
+            if (Math.abs(face.normal.y) > 0.99) { // Top or Bottom face
+                faceCenterLocal.y = (face.normal.y > 0 ? 1 : -1) * originalHeight / 2;
+            } else if (Math.abs(face.normal.x) > 0.99) { // Side face (X-axis)
+                faceCenterLocal.x = (face.normal.x > 0 ? 1 : -1) * originalWidth / 2;
+            } else if (Math.abs(face.normal.z) > 0.99) { // Side face (Z-axis)
+                faceCenterLocal.z = (face.normal.z > 0 ? 1 : -1) * originalDepth / 2;
             }
+
+            // Transform the local face center to world coordinates
+            const faceCenterWorld = faceCenterLocal.applyMatrix4(object.matrixWorld);
+            highlightMesh.position.copy(faceCenterWorld);
+
+            // Apply a small offset along the world face normal to prevent z-fighting
+            const offset = worldFaceNormal.clone().multiplyScalar(0.01); // Small offset
+            highlightMesh.position.add(offset);
+
+            // Set highlight mesh rotation to align with the world face normal
+            // PlaneGeometry's default normal is (0, 0, 1)
+            highlightMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), worldFaceNormal);
+
+            // Determine target width and height for the highlight mesh based on the face type
+            // These dimensions should be the scaled dimensions of the object's face
+            let targetWidth, targetHeight;
+            const scaledWidth = originalWidth * object.scale.x;
+            const scaledHeight = originalHeight * object.scale.y;
+            const scaledDepth = originalDepth * object.scale.z;
+
+            if (Math.abs(face.normal.y) > 0.99) { // Top or Bottom face
+                targetWidth = scaledWidth;
+                targetHeight = scaledDepth;
+            } else if (Math.abs(face.normal.x) > 0.99) { // Side face (X-axis)
+                targetWidth = scaledDepth; // Width of X-face is object's depth
+                targetHeight = scaledHeight; // Height of X-face is object's height
+            } else if (Math.abs(face.normal.z) > 0.99) { // Side face (Z-axis)
+                targetWidth = scaledWidth; // Width of Z-face is object's width
+                targetHeight = scaledHeight; // Height of Z-face is object's height
+            }
+            highlightMesh.scale.set(targetWidth, targetHeight, 1);
+
             highlightMesh.visible = true;
         }
-    }
-
-    if (!hovered && highlightMesh) {
-        highlightMesh.visible = false;
+    } else {
+        if (!hovered && highlightMesh) {
+            highlightMesh.visible = false;
+        }
     }
 }
 
@@ -1460,10 +1562,73 @@ function animate() {
         highlightOverlayMesh.scale.copy(selectedObject.scale);
     }
 
-    // === 쌓인 도형 동기화 ===
-    for (let obj of drawableObjects) {
-        stickStackedObjects(obj);
+    // 카메라 방향 표시 업데이트
+    if (cameraDirectionCtx) {
+        cameraDirectionCtx.clearRect(0, 0, cameraDirectionCanvas.width, cameraDirectionCanvas.height);
+
+        // 카메라의 전방 벡터 (월드 좌표계)
+        const cameraDirection = new THREE.Vector3();
+        camera.getWorldDirection(cameraDirection);
+
+        // 캔버스 중앙 (0,0)을 기준으로 방향을 그립니다.
+        const centerX = cameraDirectionCanvas.width / 2;
+        const centerY = cameraDirectionCanvas.height / 2;
+        const scale = 40; // 방향 벡터의 길이를 조절
+
+        // 화살표의 끝점
+        const tipX = centerX + cameraDirection.x * scale;
+        const tipY = centerY + cameraDirection.z * scale; // Z축 방향을 반전하여 표시
+
+        // 화살표 몸통 그리기
+        cameraDirectionCtx.beginPath();
+        cameraDirectionCtx.moveTo(centerX, centerY);
+        cameraDirectionCtx.lineTo(tipX, tipY);
+        cameraDirectionCtx.strokeStyle = 'red';
+        cameraDirectionCtx.lineWidth = 2;
+        cameraDirectionCtx.stroke();
+
+        // 화살표 머리 그리기
+        const angle = Math.atan2(tipY - centerY, tipX - centerX); // 화살표 몸통의 각도
+        const arrowheadLength = 10; // 화살표 머리 길이
+        const arrowheadAngle = Math.PI / 6; // 30도
+
+        cameraDirectionCtx.beginPath();
+        cameraDirectionCtx.moveTo(tipX, tipY);
+        cameraDirectionCtx.lineTo(
+            tipX - arrowheadLength * Math.cos(angle - arrowheadAngle),
+            tipY - arrowheadLength * Math.sin(angle - arrowheadAngle)
+        );
+        cameraDirectionCtx.moveTo(tipX, tipY);
+        cameraDirectionCtx.lineTo(
+            tipX - arrowheadLength * Math.cos(angle + arrowheadAngle),
+            tipY - arrowheadLength * Math.sin(angle + arrowheadAngle)
+        );
+        cameraDirectionCtx.strokeStyle = 'red';
+        cameraDirectionCtx.lineWidth = 2;
+        cameraDirectionCtx.stroke();
+
+        // 방위 라벨 그리기
+        cameraDirectionCtx.fillStyle = 'black';
+        cameraDirectionCtx.font = 'bold 12px Arial';
+        cameraDirectionCtx.textAlign = 'center';
+        cameraDirectionCtx.textBaseline = 'middle';
+
+        const radius = cameraDirectionCanvas.width / 2 - 10; // 원형 위젯의 가장자리에서 약간 안쪽
+
+        // North (Positive Z in world, Up on canvas)
+        cameraDirectionCtx.fillText('N', centerX, centerY - radius);
+        // East (Positive X in world, Right on canvas)
+        cameraDirectionCtx.fillText('E', centerX + radius, centerY);
+        // South (Negative Z in world, Down on canvas) - Z축이 반대이므로 Y는 +radius
+        cameraDirectionCtx.fillText('S', centerX, centerY + radius);
+        // West (Negative X in world, Left on canvas)
+        cameraDirectionCtx.fillText('W', centerX - radius, centerY);
     }
+
+    // === 쌓인 도형 동기화 ===
+    // for (let obj of drawableObjects) {
+    //     stickStackedObjects(obj);
+    // }
 }
 
 animate(); 
@@ -1492,6 +1657,73 @@ function updateUndoRedoMenuState() {
 // 메뉴 클릭 이벤트 바인딩
 window.addEventListener('DOMContentLoaded', () => {
     if (window.feather) window.feather.replace();
+
+    // 카메라 방향 표시 캔버스 초기화
+    cameraDirectionCanvas = document.getElementById('camera-direction-canvas');
+    if (cameraDirectionCanvas) {
+        cameraDirectionCtx = cameraDirectionCanvas.getContext('2d');
+        // 캔버스 크기 설정 (CSS에서 설정한 크기와 동일하게)
+        cameraDirectionCanvas.width = 100;
+        cameraDirectionCanvas.height = 100;
+    }
+
+    // Help Guide Modal Logic
+    const helpGuideButton = document.getElementById('help-guide-button');
+    const helpGuideModal = document.getElementById('help-guide-modal');
+    const closeButton = helpGuideModal.querySelector('.close-button');
+
+    if (helpGuideButton && helpGuideModal && closeButton) {
+        helpGuideButton.addEventListener('click', () => {
+            console.log('Modal open button clicked.');
+            console.log('Before display: ', helpGuideModal.style.display);
+            console.log('Before classList: ', helpGuideModal.classList.value);
+            console.log('Before body overflow: ', document.body.style.overflow);
+
+            helpGuideModal.style.display = 'flex'; // Set display to flex immediately for centering
+            // Force reflow to ensure display property is applied before transition
+            helpGuideModal.offsetWidth; 
+            helpGuideModal.classList.add('show');
+            document.body.style.overflow = 'hidden'; // Prevent body scrolling
+            if (window.feather) feather.replace(); // Render Feather icons inside modal
+
+            console.log('After display (setTimeout): ', helpGuideModal.style.display);
+            console.log('After classList (setTimeout): ', helpGuideModal.classList.value);
+            console.log('After body overflow (setTimeout): ', document.body.style.overflow);
+        });
+
+        const closeModal = () => {
+            console.log('closeModal called.');
+            console.log('Before classList (closeModal): ', helpGuideModal.classList.value);
+            console.log('Before body overflow (closeModal): ', document.body.style.overflow);
+
+            helpGuideModal.classList.remove('show');
+            helpGuideModal.addEventListener('transitionend', function handler() {
+                console.log('transitionend fired.');
+                helpGuideModal.style.display = 'none';
+                document.body.style.overflow = 'auto'; // Re-enable body scrolling
+                helpGuideModal.removeEventListener('transitionend', handler);
+                console.log('After display (transitionend): ', helpGuideModal.style.display);
+                console.log('After body overflow (transitionend): ', document.body.style.overflow);
+            }, { once: true }); // Use { once: true } to automatically remove the listener
+        };
+
+        closeButton.addEventListener('click', closeModal);
+
+        // Close modal on outside click
+        window.addEventListener('click', (event) => {
+            if (event.target === helpGuideModal) {
+                closeModal();
+            }
+        });
+
+        // Close modal on ESC key press
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && helpGuideModal.classList.contains('show')) {
+                closeModal();
+            }
+        });
+    }
+
     // 실행취소
     const undoItem = document.querySelector('.menu-item:nth-child(2) .dropdown-item:nth-child(1)');
     if (undoItem) {
@@ -1568,14 +1800,22 @@ window.addEventListener('DOMContentLoaded', () => {
                 drawingMode = true;
                 moveMode = false;
                 rotateMode = false;
+                controls.enabled = true; // 그리기 모드에서는 OrbitControls 활성화
             } else if (btn === moveBtn) {
                 drawingMode = false;
                 moveMode = true;
                 rotateMode = false;
+                controls.enabled = true; // 이동 모드에서는 OrbitControls 활성화
             } else if (btn === rotateBtn) {
                 drawingMode = false;
                 moveMode = false;
                 rotateMode = true;
+                transformControls.setMode('rotate'); // 회전 모드 설정
+                transformControls.showX = true;
+                transformControls.showY = true;
+                transformControls.showZ = true;
+                transformControls.space = 'local'; // 로컬 축 기준으로 회전 가이드 표시
+                controls.enabled = true; // 회전 모드에서는 OrbitControls 활성화
             }
             // === 모드 변경 시 선택된 도형 하이라이트 해제 ===
             if (selectedObject) {
@@ -1590,6 +1830,19 @@ window.addEventListener('DOMContentLoaded', () => {
                 scene.remove(previewMesh);
                 previewMesh = null;
             }
+            // TransformControls 분리 (모드 변경 시)
+            transformControls.detach();
+
+            // 그리기 모드가 아닌 다른 모드로 전환 시 텍스처 선택 해제
+            if (!drawingMode && isTexturingMode) {
+                const currentlyActive = texturePalette.querySelector('.active');
+                if (currentlyActive) {
+                    currentlyActive.classList.remove('active');
+                }
+                selectedTextureSrc = null;
+                isTexturingMode = false;
+                clearTextureHighlight();
+            }
         });
     });
     // 페이지 첫 로딩 시 상태값 동기화
@@ -1601,6 +1854,7 @@ window.addEventListener('DOMContentLoaded', () => {
 let selectedFaceIndex = null;
 let isDraggingSelected = false;
 let dragOffset = new THREE.Vector3();
+let dragGroup = []; // 드래그 그룹
 
 function highlightSelected(obj) {
     if (!obj) return;
@@ -1624,6 +1878,11 @@ function highlightSelected(obj) {
     highlightOverlayMesh.scale.copy(obj.scale);
     highlightOverlayMesh.renderOrder = 9999;
     scene.add(highlightOverlayMesh);
+
+    // TransformControls 연결
+    if (rotateMode) {
+        transformControls.attach(obj);
+    }
 }
 
 function clearSelectedHighlight(obj) {
@@ -1632,6 +1891,9 @@ function clearSelectedHighlight(obj) {
         highlightOverlayMesh = null;
     }
     clipboard = null;
+    // TransformControls 분리
+    transformControls.detach();
+    controls.enabled = true;
 }
 
 renderer.domElement.addEventListener('pointerdown', function(event) {
@@ -1657,8 +1919,11 @@ renderer.domElement.addEventListener('pointerdown', function(event) {
             if (raycaster.ray.intersectPlane(plane, intersect)) {
                 dragOffset.copy(selectedObject.position).sub(intersect);
             }
-            // 이동 시작 위치 저장
+            // 이동 시작 위치 저장 및 그룹 구성
             selectStartPosition = selectedObject.position.clone();
+            dragGroup = [selectedObject];
+            findStackedObjectsRecursive(selectedObject, dragGroup);
+            selectStartPositions = dragGroup.map(obj => obj.position.clone()); // 그룹 전체 위치 저장
             renderObjectListPanel();
         } else {
             // 빈 공간 클릭 시 선택 해제
@@ -1666,6 +1931,28 @@ renderer.domElement.addEventListener('pointerdown', function(event) {
             selectedObject = null;
             selectedFaceIndex = null;
             selectStartPosition = null;
+            renderObjectListPanel();
+        }
+    } else if (rotateMode && event.button === 0) { // 회전 모드일 때 좌클릭
+        if (transformControls.dragging) return; // TransformControls 드래그 중에는 객체 선택 로직 건너뛰기
+        updateMouseAndRaycaster(event);
+        const intersects = raycaster.intersectObjects(drawableObjects);
+        if (intersects.length > 0) {
+            const obj = intersects[0].object;
+            const faceIndex = intersects[0].face.materialIndex;
+            // 도형 선택
+            if (selectedObject && (selectedObject !== obj || selectedFaceIndex !== faceIndex)) {
+                clearSelectedHighlight(selectedObject);
+            }
+            selectedObject = obj;
+            selectedFaceIndex = faceIndex;
+            highlightSelected(selectedObject);
+            renderObjectListPanel();
+        } else {
+            // 빈 공간 클릭 시 선택 해제
+            if (selectedObject) clearSelectedHighlight(selectedObject);
+            selectedObject = null;
+            selectedFaceIndex = null;
             renderObjectListPanel();
         }
     }
@@ -1719,6 +2006,12 @@ renderer.domElement.addEventListener('pointermove', function(event) {
             });
             if (snappedX) newPos.x = snapX;
             if (snappedZ) newPos.z = snapZ;
+
+            // 그룹 전체 이동
+            const moveDelta = newPos.clone().sub(selectedObject.position);
+            dragGroup.forEach(obj => {
+                obj.position.add(moveDelta);
+            });
             // === 쌓기(y축) ===
             // 마우스 아래에 도형이 있으면, 내 도형의 x/z 바닥 평면이 그 도형의 x/z 평면과 겹치면 쌓기
             raycaster.setFromCamera(mouse, camera);
@@ -1752,7 +2045,12 @@ renderer.domElement.addEventListener('pointermove', function(event) {
                 // 바닥에 붙이기
                 newPos.y = myHeight/2;
             }
-            selectedObject.position.copy(newPos);
+
+            // 그룹 전체 이동 (y축 포함)
+            const moveDeltaWithY = newPos.clone().sub(selectedObject.position);
+            dragGroup.forEach(obj => {
+                obj.position.add(moveDeltaWithY);
+            });
         }
     } else {
         clearSelectSnapGuideLines();
@@ -1765,12 +2063,14 @@ renderer.domElement.addEventListener('pointerup', function(event) {
         if (selectedObject) {
             selectedObject.userData._origMaterial = selectedObject.material.map(m => m.clone());
         }
-        // 이동 종료 위치 저장 및 Undo/Redo 기록
-        let selectEndPosition = selectedObject.position.clone();
-        if (selectStartPosition && !selectStartPosition.equals(selectEndPosition)) {
-            history.execute(new SelectObjectCommand(selectedObject, selectStartPosition, selectEndPosition));
+        // 이동 종료 위치 저장 및 그룹 Undo/Redo 기록
+        let selectEndPositions = dragGroup.map(obj => obj.position.clone());
+        if (selectStartPositions.length > 0 && !selectStartPositions[0].equals(selectEndPositions[0])) {
+            history.execute(new SelectGroupCommand(dragGroup, selectStartPositions, selectEndPositions));
         }
+        dragGroup = [];
         selectStartPosition = null;
+        selectStartPositions = [];
     }
 });
 window.addEventListener('keydown', function(event) {
@@ -1790,8 +2090,14 @@ window.addEventListener('keydown', function(event) {
     if (event.target.tagName && (event.target.tagName.toUpperCase() === 'INPUT' || event.target.tagName.toUpperCase() === 'TEXTAREA')) {
         return;
     }
-    // ESC키: 그리기 모드로 복귀
+    // ESC키: 모달이 열려 있으면 닫고, 아니면 그리기 모드로 복귀
     if (event.key === 'Escape') {
+        const helpGuideModal = document.getElementById('help-guide-modal');
+        if (helpGuideModal && helpGuideModal.style.display === 'block') {
+            helpGuideModal.style.display = 'none';
+            return; // 모달을 닫았으면 다른 동작은 하지 않음
+        }
+
         drawingMode = true;
         moveMode = false;
         rotateMode = false;
@@ -1857,6 +2163,7 @@ function showSelectSnapGuideLine(axis, position, centerPos, size) {
 
 // 이동(드래그) Undo/Redo를 위한 위치 저장 변수
 let selectStartPosition = null;
+let selectStartPositions = []; // 그룹 이동용
 
 function stickStackedObjects(baseObj, visitedSet = new Set()) {
     if (visitedSet.has(baseObj)) return;
