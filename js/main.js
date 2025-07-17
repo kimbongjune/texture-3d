@@ -119,6 +119,8 @@ directionalLight.position.set(5, 10, 7.5);
 directionalLight.castShadow = true;
 directionalLight.shadow.mapSize.width = 1024;
 directionalLight.shadow.mapSize.height = 1024;
+directionalLight.shadow.bias = -0.0005; // 그림자 아티팩트(shadow acne) 방지
+directionalLight.shadow.normalBias = 0.02; // 그림자 가장자리 부드럽게
 directionalLight.shadow.camera.near = 1;
 directionalLight.shadow.camera.far = 50;
 directionalLight.shadow.camera.left = -20;
@@ -188,6 +190,11 @@ let highlightedFaceInfo = {
     originalMaterial: null
 };
 
+// 텍스처 적용 방식 (기본값: 원본 길이)
+let textureApplyMode = 'original'; // 'original' 또는 'stretch'
+
+let draggedTextureSrc = null; // 드래그 중인 텍스처의 src
+
 // 4. 텍스처 선택 로직
 const texturePalette = document.getElementById('texture-palette');
 let selectedTextureSrc = null;
@@ -223,7 +230,16 @@ texturePalette.addEventListener('click', (event) => {
             event.target.classList.add('active');
             selectedTextureSrc = event.target.dataset.texture;
             isTexturingMode = true;
+            textureApplyMode = 'original'; // 텍스처 선택 시 기본값 'original'로 설정
         }
+    }
+});
+
+// 텍스처 드래그 시작 이벤트
+texturePalette.addEventListener('dragstart', (event) => {
+    if (event.target.classList.contains('texture-option')) {
+        draggedTextureSrc = event.target.dataset.texture;
+        event.dataTransfer.setData('text/plain', draggedTextureSrc); // 데이터 전송 (필수)
     }
 });
 
@@ -237,6 +253,40 @@ renderer.domElement.addEventListener('pointermove', onPointerMove, false);
 renderer.domElement.addEventListener('pointerup', onPointerUp, false);
 renderer.domElement.addEventListener('click', onCanvasClick, false);
 renderer.domElement.addEventListener('contextmenu', onRightClick, false);
+
+// 드래그 앤 드롭 이벤트 리스너 추가
+renderer.domElement.addEventListener('dragover', (event) => {
+    event.preventDefault(); // 드롭을 허용하기 위해 기본 동작 방지
+});
+
+renderer.domElement.addEventListener('drop', (event) => {
+    event.preventDefault();
+    if (!draggedTextureSrc) return; // 드래그된 텍스처가 없으면 리턴
+
+    updateMouseAndRaycaster(event);
+    const intersects = raycaster.intersectObjects(drawableObjects);
+
+    if (intersects.length > 0) {
+        const intersectedObject = intersects[0].object;
+        applyTextureToAllFaces(intersectedObject, draggedTextureSrc);
+    }
+    draggedTextureSrc = null; // 드래그 상태 초기화
+});
+
+// ... (existing code) ...
+
+async function applyTextureToAllFaces(object, textureSrc) {
+    const textureCommandPromises = [];
+    // BoxGeometry는 6개의 면을 가집니다.
+    for (let i = 0; i < 6; i++) {
+        const oldMaterial = object.material[i].clone();
+        // applyTextureToFace가 Promise를 반환하므로 await 사용
+        textureCommandPromises.push(applyTextureToFace(object, i, textureSrc, 'original', oldMaterial));
+    }
+    // 모든 면에 대한 텍스처 적용을 하나의 그룹 커맨드로 묶어 실행
+    const textureCommands = await Promise.all(textureCommandPromises);
+    history.execute(new GroupTextureCommand(textureCommands));
+}
 
 // 커스텀 휠 줌 처리
 renderer.domElement.addEventListener('wheel', (event) => {
@@ -317,12 +367,10 @@ window.addEventListener('keyup', (event) => {
     }
 });
 
-function onCanvasClick(event) {
+async function onCanvasClick(event) {
     const dragDistance = mouseDownPos.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
     if (dragDistance > 5 || !isTexturingMode || !selectedTextureSrc) return;
 
-    // 하이라이트 복원 후 텍스처 적용
-    const highlightedInfoBeforeClick = { ...highlightedFaceInfo };
     clearTextureHighlight();
 
     const intersects = raycaster.intersectObjects(drawableObjects);
@@ -331,23 +379,227 @@ function onCanvasClick(event) {
         const intersection = intersects[0];
         const intersectedObject = intersection.object;
         const materialIndex = intersection.face.materialIndex;
-        const oldMaterial = intersectedObject.material[materialIndex];
+        const oldMaterial = intersectedObject.material[materialIndex].clone();
 
-        const textureLoader = new THREE.TextureLoader();
-        textureLoader.load(selectedTextureSrc, (texture) => {
+        const command = await applyTextureToFace(intersectedObject, materialIndex, selectedTextureSrc, textureApplyMode, oldMaterial);
+        history.execute(command);
+    }
+}
+
+function applyTextureToFace(object, materialIndex, textureSrc, mode, oldMaterial) {
+    const textureLoader = new THREE.TextureLoader();
+    return new Promise((resolve) => {
+        textureLoader.load(textureSrc, (texture) => {
             texture.wrapS = THREE.RepeatWrapping;
             texture.wrapT = THREE.RepeatWrapping;
-            texture.repeat.set(1, 1);
-            
+
+            // 기존 텍스처의 회전 값을 가져옵니다.
+            let existingRotation = 0;
+            if (oldMaterial && oldMaterial.map) {
+                existingRotation = oldMaterial.map.rotation;
+            }
+
+            if (mode === 'stretch') {
+                texture.repeat.set(1, 1); // 텍스처를 면에 늘려 채움
+            } else { // 'original' 모드
+                let relativeTextureSrc = textureSrc;
+                // textureSrc가 전체 URL인 경우 상대 경로로 변환
+                if (textureSrc.startsWith('http://') || textureSrc.startsWith('https://')) {
+                    try {
+                        const url = new URL(textureSrc);
+                        const texturesPathIndex = url.pathname.indexOf('/textures/');
+                        if (texturesPathIndex !== -1) {
+                            relativeTextureSrc = url.pathname.substring(texturesPathIndex + 1); // '/textures/'에서 '/' 제거
+                        } else {
+                            // 'textures/' 경로가 없는 경우, 파일 이름만 사용 (최후의 수단)
+                            relativeTextureSrc = url.pathname.substring(url.pathname.lastIndexOf('/') + 1);
+                        }
+                    } catch (e) {
+                        console.error("Error parsing URL:", textureSrc, e);
+                        // URL 파싱 실패 시, 이미 상대 경로라고 가정
+                        relativeTextureSrc = textureSrc;
+                    }
+                }
+
+                const textureOption = texturePalette.querySelector(`.texture-option[data-texture="${relativeTextureSrc}"]`);
+                if (!textureOption) {
+                    console.error("Could not find texture option for:", relativeTextureSrc, "Falling back to stretch mode.");
+                    texture.repeat.set(1, 1); // 해당 텍스처 옵션을 찾지 못하면 늘이기 모드로 대체
+                } else {
+                    const textureWidthMM = parseFloat(textureOption.dataset.x);
+                    const textureHeightMM = parseFloat(textureOption.dataset.y);
+
+                    let faceWidthM = 1;
+                    let faceHeightM = 1;
+
+                    const geometry = object.geometry;
+                    const scale = object.scale;
+
+                    let normal = new THREE.Vector3();
+                    switch (materialIndex) {
+                        case 0: // right
+                            normal.set(1, 0, 0);
+                            break;
+                        case 1: // left
+                            normal.set(-1, 0, 0);
+                            break;
+                        case 2: // top
+                            normal.set(0, 1, 0);
+                            break;
+                        case 3: // bottom
+                            normal.set(0, -1, 0);
+                            break;
+                        case 4: // front
+                            normal.set(0, 0, 1);
+                            break;
+                        case 5: // back
+                            normal.set(0, 0, -1);
+                            break;
+                    }
+                    normal.applyQuaternion(object.quaternion).normalize();
+
+                    if (Math.abs(normal.y) > 0.99) { // Top/Bottom face
+                        faceWidthM = geometry.parameters.width * scale.x;
+                        faceHeightM = geometry.parameters.depth * scale.z;
+                    } else if (Math.abs(normal.x) > 0.99) { // Side face (X)
+                        faceWidthM = geometry.parameters.depth * scale.z;
+                        faceHeightM = geometry.parameters.height * scale.y;
+                    } else if (Math.abs(normal.z) > 0.99) { // Side face (Z)
+                        faceWidthM = geometry.parameters.width * scale.x;
+                        faceHeightM = geometry.parameters.height * scale.y;
+                    }
+
+                    const repeatX = faceWidthM / (textureWidthMM / 1000);
+                    const repeatY = faceHeightM / (textureHeightMM / 1000);
+
+                    texture.repeat.set(repeatX, repeatY);
+                }
+            }
+
+            // 기존 텍스처의 회전 값을 새로 로드된 텍스처에 적용합니다.
+            texture.rotation = existingRotation;
+
             const newMaterial = new THREE.MeshStandardMaterial({
                 map: texture,
                 side: THREE.DoubleSide
             });
-            
-            // TextureCommand 사용
-            const command = new TextureCommand(intersectedObject, materialIndex, oldMaterial, newMaterial);
-            history.execute(command);
+
+            const command = new TextureCommand(object, materialIndex, oldMaterial, newMaterial, textureSrc, mode);
+            resolve(command); // Command 인스턴스를 Promise로 반환
         });
+    });
+}
+
+class RemoveTextureCommand {
+    constructor(object, materialIndex, oldMaterial, defaultMaterial) {
+        this.object = object;
+        this.materialIndex = materialIndex;
+        this.oldMaterial = oldMaterial;
+        this.defaultMaterial = defaultMaterial; // 기본 재질 (텍스처 제거 시 적용)
+        this.name = 'RemoveTexture';
+        console.log('RemoveTextureCommand constructor:', { object: object.uuid, materialIndex, oldMaterial, defaultMaterial }); // Debug log
+    }
+
+    execute() {
+        console.log('RemoveTextureCommand execute: Applying default material to', this.object.uuid, 'at index', this.materialIndex); // Debug log
+        // 기존 텍스처의 참조만 제거 (dispose는 undo/redo 시스템에서 신중하게 관리되어야 함)
+        if (this.oldMaterial && this.oldMaterial.map) {
+            this.oldMaterial.map = null; // 텍스처 참조 제거
+        }
+        this.object.material[this.materialIndex] = this.defaultMaterial;
+        this.object.material.needsUpdate = true;
+        console.log('RemoveTextureCommand execute: material after change', this.object.material[this.materialIndex], 'map:', this.object.material[this.materialIndex].map); // Debug log
+    }
+
+    undo() {
+        console.log('RemoveTextureCommand undo: Restoring old material to', this.object.uuid, 'at index', this.materialIndex); // Debug log
+        this.object.material[this.materialIndex] = this.oldMaterial;
+        this.object.material.needsUpdate = true;
+        console.log('RemoveTextureCommand undo: material after change', this.object.material[this.materialIndex], 'map:', this.object.material[this.materialIndex].map); // Debug log
+    }
+}
+
+class RotateTextureCommand {
+    constructor(object, materialIndex, oldMaterial) {
+        this.object = object;
+        this.materialIndex = materialIndex;
+        this.oldMaterial = oldMaterial;
+        this.newMaterial = null; // Will be created in execute
+        this.name = 'RotateTexture';
+        console.log('RotateTextureCommand constructor:', { object: object.uuid, materialIndex, oldMaterial }); // Debug log
+    }
+
+    execute() {
+        console.log('RotateTextureCommand execute: Rotating texture for', this.object.uuid, 'at index', this.materialIndex); // Debug log
+        
+        const currentMaterial = this.object.material[this.materialIndex];
+        if (!currentMaterial || !currentMaterial.map) {
+            console.warn('No texture found to rotate.');
+            return;
+        }
+
+        // Clone the old material to create a new one with rotated texture
+        this.newMaterial = currentMaterial.clone();
+        const oldMap = currentMaterial.map;
+
+        // Create a new texture with rotated UVs
+        const newMap = oldMap.clone();
+        newMap.rotation = (oldMap.rotation || 0) + Math.PI / 2; // Rotate by 90 degrees (PI/2 radians)
+        newMap.needsUpdate = true; // Important for Three.js to re-render with new rotation
+
+        this.newMaterial.map = newMap;
+        this.newMaterial.needsUpdate = true;
+
+        this.object.material[this.materialIndex] = this.newMaterial;
+        this.object.material.needsUpdate = true; // Ensure the object's material array is updated
+        console.log('RotateTextureCommand execute: material after rotation', this.object.material[this.materialIndex], 'rotation:', this.object.material[this.materialIndex].map.rotation); // Debug log
+    }
+
+    undo() {
+        console.log('RotateTextureCommand undo: Restoring old material for', this.object.uuid, 'at index', this.materialIndex); // Debug log
+        this.object.material[this.materialIndex] = this.oldMaterial;
+        this.object.material.needsUpdate = true;
+        console.log('RotateTextureCommand undo: material after undo', this.object.material[this.materialIndex], 'map:', this.object.material[this.materialIndex].map); // Debug log
+    }
+}
+
+class TextureCommand {
+    constructor(object, materialIndex, oldMaterial, newMaterial, textureSrc, applyMode) {
+        this.object = object;
+        this.materialIndex = materialIndex;
+        this.oldMaterial = oldMaterial;
+        this.newMaterial = newMaterial;
+        this.textureSrc = textureSrc; // 텍스처 경로 저장
+        this.applyMode = applyMode; // 적용 방식 저장
+        this.name = 'ApplyTexture';
+    }
+
+    execute() {
+        this.object.material[this.materialIndex] = this.newMaterial;
+        this.object.material.needsUpdate = true;
+    }
+
+    undo() {
+        this.object.material[this.materialIndex] = this.oldMaterial;
+        this.object.material.needsUpdate = true;
+    }
+}
+
+class GroupTextureCommand {
+    constructor(commands) {
+        this.commands = commands;
+        this.name = 'ApplyTextureToAllFaces';
+    }
+
+    execute() {
+        this.commands.forEach(command => command.execute());
+    }
+
+    undo() {
+        // Undo는 역순으로 실행하는 것이 안전합니다.
+        for (let i = this.commands.length - 1; i >= 0; i--) {
+            this.commands[i].undo();
+        }
     }
 }
 
@@ -391,16 +643,21 @@ function onRightClick(event) {
     const intersects = raycaster.intersectObjects(drawableObjects);
     if (intersects.length > 0) {
         const targetObject = intersects[0].object;
+        const materialIndex = intersects[0].face.materialIndex; // 클릭된 면의 materialIndex 가져오기
+        console.log('onRightClick: targetObject', targetObject.uuid, 'materialIndex', materialIndex); // Debug log
         // 돌출 중인 객체는 컨텍스트 메뉴 표시 안함
         if (isExtruding && extrudeTarget === targetObject) {
             return;
         }
         // 컨텍스트 메뉴 표시
-        showContextMenu(event.clientX, event.clientY, targetObject);
+        showContextMenu(event.clientX, event.clientY, targetObject, materialIndex);
     }
 }
 
-function showContextMenu(x, y, targetObject) {
+let contextMenuMaterialIndex = -1; // 컨텍스트 메뉴가 표시될 때의 materialIndex 저장
+
+function showContextMenu(x, y, targetObject, materialIndex) {
+    console.log('showContextMenu: targetObject', targetObject.uuid, 'materialIndex', materialIndex); // Debug log
     if (!contextMenu) {
         contextMenu = document.getElementById('context-menu');
         
@@ -423,6 +680,73 @@ function showContextMenu(x, y, targetObject) {
                 hideContextMenu();
             }
         });
+
+        // 텍스처 삭제 버튼 클릭 이벤트
+        const deleteTextureButton = document.getElementById('delete-texture');
+        deleteTextureButton.addEventListener('click', () => {
+            console.log('Delete Texture button clicked. contextMenuTarget:', contextMenuTarget ? contextMenuTarget.uuid : 'null', 'contextMenuMaterialIndex:', contextMenuMaterialIndex); // Debug log
+            if (contextMenuTarget && contextMenuMaterialIndex !== -1) {
+                const oldMaterial = contextMenuTarget.material[contextMenuMaterialIndex];
+                const defaultMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+                
+                console.log('Executing RemoveTextureCommand with oldMaterial:', oldMaterial, 'defaultMaterial:', defaultMaterial); // Debug log
+                const command = new RemoveTextureCommand(contextMenuTarget, contextMenuMaterialIndex, oldMaterial, defaultMaterial);
+                history.execute(command);
+                renderer.render(scene, camera); // 텍스처 삭제 후 즉시 렌더링 업데이트
+                clearTextureHighlight(); // 텍스처 하이라이트 제거
+                hideContextMenu();
+            } else {
+                console.warn('Cannot delete texture: contextMenuTarget or contextMenuMaterialIndex is invalid.'); // Debug warning
+            }
+        });
+
+        // 텍스처 회전 버튼 클릭 이벤트
+        const rotateTextureButton = document.getElementById('rotate-texture');
+        rotateTextureButton.addEventListener('click', () => {
+            console.log('Rotate Texture button clicked. contextMenuTarget:', contextMenuTarget ? contextMenuTarget.uuid : 'null', 'contextMenuMaterialIndex:', contextMenuMaterialIndex); // Debug log
+            if (contextMenuTarget && contextMenuMaterialIndex !== -1) {
+                const oldMaterial = contextMenuTarget.material[contextMenuMaterialIndex].clone(); // oldMaterial을 복제하여 전달
+                
+                console.log('Executing RotateTextureCommand with oldMaterial:', oldMaterial); // Debug log
+                const command = new RotateTextureCommand(contextMenuTarget, contextMenuMaterialIndex, oldMaterial);
+                history.execute(command);
+                renderer.render(scene, camera); // 텍스처 회전 후 즉시 렌더링 업데이트
+                clearTextureHighlight(); // 텍스처 하이라이트 제거
+                hideContextMenu();
+            } else {
+                console.warn('Cannot rotate texture: contextMenuTarget or contextMenuMaterialIndex is invalid.'); // Debug warning
+            }
+        });
+
+        // 텍스처 적용 방식 버튼 클릭 이벤트
+        const textureModeStretchButton = document.getElementById('texture-mode-stretch');
+        const textureModeOriginalButton = document.getElementById('texture-mode-original');
+
+        if (textureModeStretchButton) {
+            textureModeStretchButton.addEventListener('click', async () => {
+                if (contextMenuTarget && contextMenuMaterialIndex !== -1) {
+                    const currentMaterial = contextMenuTarget.material[contextMenuMaterialIndex];
+                    if (currentMaterial && currentMaterial.map) {
+                        const command = await applyTextureToFace(contextMenuTarget, contextMenuMaterialIndex, currentMaterial.map.image.src, 'stretch', currentMaterial.clone());
+                        history.execute(command);
+                    }
+                    hideContextMenu();
+                }
+            });
+        }
+
+        if (textureModeOriginalButton) {
+            textureModeOriginalButton.addEventListener('click', async () => {
+                if (contextMenuTarget && contextMenuMaterialIndex !== -1) {
+                    const currentMaterial = contextMenuTarget.material[contextMenuMaterialIndex];
+                    if (currentMaterial && currentMaterial.map) {
+                        const command = await applyTextureToFace(contextMenuTarget, contextMenuMaterialIndex, currentMaterial.map.image.src, 'original', currentMaterial.clone());
+                        history.execute(command);
+                    }
+                    hideContextMenu();
+                }
+            });
+        }
         
         // 외부 클릭 시 메뉴 숨김
         document.addEventListener('click', (event) => {
@@ -433,6 +757,32 @@ function showContextMenu(x, y, targetObject) {
     }
     
     contextMenuTarget = targetObject;
+    contextMenuMaterialIndex = materialIndex; // materialIndex 저장
+
+    // 텍스처 삭제, 회전, 적용 방식 버튼 표시/숨김 로직
+    const deleteTextureButton = document.getElementById('delete-texture');
+    const rotateTextureButton = document.getElementById('rotate-texture');
+    const textureApplyModeMenu = document.getElementById('texture-apply-mode-menu'); // 새로 추가된 메뉴
+
+    if (deleteTextureButton && rotateTextureButton && textureApplyModeMenu) {
+        let hasTexture = false;
+        // 클릭된 면의 materialIndex를 사용하여 해당 재질에 텍스처가 있는지 확인
+        if (Array.isArray(targetObject.material)) {
+            if (targetObject.material[materialIndex] && targetObject.material[materialIndex].map) {
+                hasTexture = true;
+            }
+        } else {
+            // 단일 재질인 경우 (materialIndex는 0일 것)
+            if (targetObject.material && targetObject.material.map) {
+                hasTexture = true;
+            }
+        }
+        console.log('showContextMenu: hasTexture', hasTexture); // Debug log
+        deleteTextureButton.style.display = hasTexture ? 'block' : 'none';
+        rotateTextureButton.style.display = hasTexture ? 'block' : 'none';
+        textureApplyModeMenu.style.display = hasTexture ? 'block' : 'none'; // 텍스처 적용 방식 메뉴도 텍스처가 있을 때만 표시
+    }
+
     contextMenu.style.left = x + 'px';
     contextMenu.style.top = y + 'px';
     contextMenu.style.display = 'block';
@@ -466,6 +816,7 @@ let extrudeBaseY = null;
 // extrude 관련 그룹 undo/redo용 변수 추가
 let extrudeStackedObjects = [];
 let extrudeOldTransforms = [];
+let initialExtrudeTargetTopY = 0;
 function findStackedObjectsRecursive(baseObj, resultArr) {
     const baseBox = new THREE.Box3().setFromObject(baseObj);
 
@@ -511,6 +862,7 @@ function onPointerDown(event) {
         // extrude 시작 시 바닥 위치 저장
         const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
         extrudeBaseY = extrudeTarget.position.y - height/2;
+        initialExtrudeTargetTopY = extrudeTarget.position.y + height/2; // 초기 상단 Y 좌표 저장
         highlightMesh.visible = false;
         // === 그룹 undo/redo용: 아래 도형 + 위에 쌓인 도형들 모두 old transform 저장 ===
         extrudeStackedObjects = [extrudeTarget];
@@ -686,7 +1038,7 @@ function onPointerMove(event) {
         // === y축 extrude + 면-면 스냅 (스냅이 걸리면 실제로 딱 맞게 붙임) ===
         const deltaY = event.clientY - lastMouseY;
         const oldHeight = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
-        let newHeight = Math.max(0.1, oldHeight - deltaY * 0.05);
+        let newHeight = Math.max(0.2, oldHeight - deltaY * 0.05);
         let snapMin = 0.18;
         let myTop = extrudeBaseY + newHeight;
         let snapTargetY = null;
@@ -718,12 +1070,17 @@ function onPointerMove(event) {
         extrudeTarget.position.y = extrudeBaseY + newHeight / 2;
         extrudeTarget.scale.y = newScaleY;
         
-        let lastTop = extrudeBaseY + newHeight;
+        // extrudeTarget의 새로운 상단 Y 좌표
+        const newExtrudeTargetTopY = extrudeTarget.position.y + newHeight / 2;
+        // extrudeTarget의 Y 변화량 계산
+        const yDelta = newExtrudeTargetTopY - initialExtrudeTargetTopY;
+
+        // 쌓인 도형들의 위치를 yDelta만큼 이동
         for (let i = 1; i < extrudeStackedObjects.length; i++) {
             const objToMove = extrudeStackedObjects[i];
-            const objHeight = objToMove.geometry.parameters.height * objToMove.scale.y;
-            objToMove.position.y = lastTop + objHeight / 2;
-            lastTop += objHeight;
+            // extrudeOldTransforms에서 해당 도형의 원래 위치를 찾아 yDelta를 더함
+            const oldTransform = extrudeOldTransforms[i];
+            objToMove.position.y = oldTransform.position.y + yDelta;
         }
         // === 크기 정보 마우스 따라다니며 표시 (Extrude) ===
         const width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
@@ -1037,8 +1394,8 @@ function onPointerUp(event) {
         if (snapGuide) snapGuide.visible = false; // 그리기 끝나면 가이드 숨김
         clearAxisGuideLines(); // 축 가이드 라인들만 정리
 
-        const width = Math.abs(snappedEndPoint.x - startPoint.x);
-        const depth = Math.abs(snappedEndPoint.z - startPoint.z);
+        const width = Math.round(Math.abs(snappedEndPoint.x - startPoint.x));
+        const depth = Math.round(Math.abs(snappedEndPoint.z - startPoint.z));
         const initialHeight = 0.02;
 
         // === 크기 정보 표시 ===
@@ -1102,7 +1459,7 @@ function updateHighlight() {
             hovered = true;
 
             if (!highlightMesh) {
-                const highlightMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthTest: false });
+                const highlightMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthTest: false });
                 const highlightGeometry = new THREE.PlaneGeometry(1, 1);
                 highlightMesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
                 highlightMesh.renderOrder = 9999; // Render on top of everything
@@ -1182,9 +1539,11 @@ function updateHighlight() {
 
 function clearTextureHighlight() {
     if (highlightedFaceInfo.object) {
-        // 저장해둔 원래 재질로 복원
-        highlightedFaceInfo.object.material[highlightedFaceInfo.faceIndex] = highlightedFaceInfo.originalMaterial;
-        highlightedFaceInfo.object.material.needsUpdate = true;
+        // 현재 재질이 하이라이트 재질인 경우에만 원래 재질로 복원
+        if (highlightedFaceInfo.object.material[highlightedFaceInfo.faceIndex] === textureHighlightMaterial) {
+            highlightedFaceInfo.object.material[highlightedFaceInfo.faceIndex] = highlightedFaceInfo.originalMaterial;
+            highlightedFaceInfo.object.material.needsUpdate = true;
+        }
     }
     // 상태 초기화
     highlightedFaceInfo.object = null;
@@ -1682,7 +2041,7 @@ window.addEventListener('DOMContentLoaded', () => {
             helpGuideModal.classList.remove('show');
             helpGuideModal.addEventListener('transitionend', () => {
                 helpGuideModal.style.display = 'none';
-                document.body.style.overflow = 'auto';
+                document.body.style.overflow = 'none';
             }, { once: true });
         };
 

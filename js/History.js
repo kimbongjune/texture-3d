@@ -62,22 +62,36 @@ class TransformCommand extends Command {
 
 // 3. 텍스처 적용 Command
 class TextureCommand extends Command {
-    constructor(object, materialIndex, oldMaterial, newMaterial) {
+    constructor(object, materialIndex, oldMaterial, newMaterial, price = 0) {
         super();
         this.object = object;
         this.materialIndex = materialIndex;
         this.oldMaterial = oldMaterial;
         this.newMaterial = newMaterial;
+        this.price = price;
+        this.name = 'ApplyTexture';
     }
 
     execute() {
         this.object.material[this.materialIndex] = this.newMaterial;
         this.object.material.needsUpdate = true;
+        if (typeof totalTexturePrice !== 'undefined') {
+            totalTexturePrice += this.price;
+            if (typeof updateTotalPriceDisplay === 'function') {
+                updateTotalPriceDisplay();
+            }
+        }
     }
 
     undo() {
         this.object.material[this.materialIndex] = this.oldMaterial;
         this.object.material.needsUpdate = true;
+        if (typeof totalTexturePrice !== 'undefined') {
+            totalTexturePrice -= this.price;
+            if (typeof updateTotalPriceDisplay === 'function') {
+                updateTotalPriceDisplay();
+            }
+        }
     }
 }
 
@@ -170,11 +184,12 @@ class RotationCommand extends Command {
 
 // History 관리 클래스
 class DeleteObjectCommand {
-    constructor(scene, objectToDelete, drawableObjects, findStackedObjectsFunc) {
+    constructor(scene, objectToDelete, drawableObjects, findStackedObjectsFunc, price = 0) {
         this.scene = scene;
         this.objectToDelete = objectToDelete;
         this.drawableObjects = drawableObjects;
         this.findStackedObjectsFunc = findStackedObjectsFunc;
+        this.price = price; // Store the price of the object being deleted
 
         this.deleteIndex = -1;
         this.stackedObjects = [];
@@ -198,7 +213,13 @@ class DeleteObjectCommand {
             this.scene.remove(this.objectToDelete);
         }
 
-        
+        // Update total price (subtract price of deleted object)
+        if (typeof totalTexturePrice !== 'undefined') {
+            totalTexturePrice -= this.price;
+            if (typeof updateTotalPriceDisplay === 'function') {
+                updateTotalPriceDisplay();
+            }
+        }
 
         // 4. Update global state
         if (typeof updateAllVertices === 'function') updateAllVertices();
@@ -223,6 +244,14 @@ class DeleteObjectCommand {
             obj.scale.copy(oldTransform.scale);
         });
 
+        // Update total price (add price of restored object)
+        if (typeof totalTexturePrice !== 'undefined') {
+            totalTexturePrice += this.price;
+            if (typeof updateTotalPriceDisplay === 'function') {
+                updateTotalPriceDisplay();
+            }
+        }
+
         // 3. Update global state
         if (typeof updateAllVertices === 'function') updateAllVertices();
         if (typeof renderObjectListPanel === 'function') renderObjectListPanel();
@@ -236,6 +265,12 @@ class History {
     }
 
     execute(command) {
+        // command가 유효한지 확인
+        if (!command) {
+            console.warn("History.execute called with undefined command. Ignoring.");
+            return; // undefined 커맨드는 무시
+        }
+        console.log("History.execute called with command:", command.name); // Log moved here
         command.execute();
         this.undoStack.push(command);
         this.redoStack = []; // 새로운 작업이 생기면 redo 스택은 초기화

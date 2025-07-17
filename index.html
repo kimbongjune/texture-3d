@@ -30,7 +30,6 @@
             <div class="dropdown">
                 <div class="dropdown-item">실행 취소</div>
                 <div class="dropdown-item">다시 실행</div>
-                <div class="dropdown-item">삭제</div>
             </div>
         </div>
         <div class="menu-item">보기
@@ -41,13 +40,13 @@
                 <div class="dropdown-item">전체화면</div>
             </div>
         </div>
-        <div class="menu-item">그리기
+        <!-- <div class="menu-item">그리기
             <div class="dropdown">
                 <div class="dropdown-divider"></div>
                 <div class="dropdown-item">사각형</div>
                 <div class="dropdown-item">원</div>
             </div>
-        </div>
+        </div> -->
         <div class="menu-item">도움말
             <div class="dropdown">
                 <div class="dropdown-item" id="help-guide-button">사용 안내</div>
@@ -75,9 +74,12 @@
         <!-- 객체 목록 패널을 c-wrapper 내부로 이동 -->
         <div id="texture-palette">
             <h3>텍스처 선택</h3>
-            <img src="textures/wood.jpg" alt="Wood Texture" data-texture="textures/wood.jpg" class="texture-option active">
-            <img src="textures/brick.jpg" alt="Brick Texture" data-texture="textures/brick.jpg" class="texture-option">
-            <img src="textures/stone.jpg" alt="Brick Texture" data-texture="textures/stone.jpg" class="texture-option">
+            <img src="textures/wood.jpg" alt="Wood Texture" data-texture="textures/wood.jpg" class="texture-option active" data-x="1000" data-y="1000" draggable="true">
+            <img src="textures/brick.jpg" alt="Brick Texture" data-texture="textures/brick.jpg" class="texture-option" data-x="1000" data-y="1000" draggable="true">
+            <img src="textures/stone.jpg" alt="Brick Texture" data-texture="textures/stone.jpg" class="texture-option" data-x="1000" data-y="1000" draggable="true">
+            <div id="total-price-display" style="margin-top: auto; padding-top: 10px; border-top: 1px solid #ccc; text-align: center; font-weight: bold;">
+                총 가격: 0원
+            </div>
         </div>
         <div id="dimension-info" style="display:none; padding: 15px; background: #fffbe7; border-left: 1px solid #ccc; min-width: 180px; font-size: 16px;">
             <b>크기 정보</b><br>
@@ -88,6 +90,14 @@
         <div id="context-menu" class="context-menu">
             <div class="context-menu-item" id="delete-object">객체 삭제</div>
             <div class="context-menu-item" id="copy-object">객체 복사</div>
+            <div class="context-menu-item" id="delete-texture" style="display: none;">텍스처 삭제</div>
+            <div class="context-menu-item" id="rotate-texture" style="display: none;">텍스처 회전</div>
+            <div class="context-menu-item has-submenu" id="texture-apply-mode-menu" style="display: none;">텍스처 적용 방식
+                <div class="sub-menu">
+                    <div class="context-menu-item" id="texture-mode-stretch">늘이기</div>
+                    <div class="context-menu-item" id="texture-mode-original">원본 길이</div>
+                </div>
+            </div>
         </div>
     </div>
     <!-- 캔버스 세로 툴바 -->

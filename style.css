@@ -241,6 +241,27 @@ body {
     background-color: #e0e0e0;
 } 
 
+.context-menu-item.has-submenu {
+    position: relative;
+}
+
+.context-menu-item.has-submenu > .sub-menu {
+    display: none;
+    position: absolute;
+    left: 100%; /* 부모 메뉴 아이템의 오른쪽에 위치 */
+    top: 0;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    min-width: 120px;
+    z-index: 1001; /* 컨텍스트 메뉴보다 위에 표시 */
+}
+
+.context-menu-item.has-submenu:hover > .sub-menu {
+    display: block;
+} 
+
 #toolbar-vertical {
     border-radius: 10px;
     position: fixed;
@@ -544,6 +565,7 @@ body {
     justify-content: center;
     max-height: 90vh; /* Limit height to prevent overflow */
     overflow-y: auto; /* Enable internal scrolling if content overflows */
+    overflow-x: hidden; /* Hide horizontal scrollbar */
     transform: scale(0.9); /* Start slightly smaller for animation */
     transition: transform 0.3s ease-in-out; /* Scale animation */
 }
@@ -562,20 +584,34 @@ body {
 
 .modal-body {
     display: flex;
-    flex-wrap: wrap; /* Allow wrapping on smaller screens */
-    justify-content: center; /* Center content */
-    gap: 30px; /* Space between columns */
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 30px;
     width: 100%;
 }
 
 .modal-left-column {
-    flex: 1; /* Take available space */
-    min-width: 300px; /* Minimum width for left column */
+    flex: 1;
+    min-width: 300px;
+    max-width: 100%; /* Ensure it doesn't overflow */
 }
 
 .modal-right-column {
-    flex: 0 0 250px; /* Fixed width for right column */
-    min-width: 250px; /* Ensure it doesn't shrink too much */
+    flex: 0 0 250px;
+    min-width: 250px;
+    max-width: 100%; /* Ensure it doesn't overflow */
+}
+
+@media (max-width: 768px) {
+    .modal-body {
+        flex-direction: column; /* Stack columns on smaller screens */
+        align-items: center;
+    }
+    .modal-left-column,
+    .modal-right-column {
+        min-width: unset; /* Remove min-width constraint */
+        width: 100%; /* Take full width */
+    }
 }
 
 .modal-body h3 {
