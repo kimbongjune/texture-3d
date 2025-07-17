@@ -36,31 +36,39 @@ const transformControls = new TransformControls(camera, renderer.domElement);
 scene.add(transformControls);
 transformControls.size = 1.5; // 회전 가이드 크기 조정
 
-transformControls.addEventListener('mouseDown', function () {
-    controls.enabled = false;
-});
-
 let oldRotation = null;
+const snapAngle = Math.PI / 12; // 15도 스냅
+
 transformControls.addEventListener('objectChange', function () {
-    if (selectedObject && transformControls.dragging) {
+    if (transformControls.dragging && selectedObject) {
+        // 드래그 시작 후 첫 변경 시에만 oldRotation 기록
         if (oldRotation === null) {
             oldRotation = selectedObject.rotation.clone();
+        }
+        // Shift 키 누를 때 스냅 적용
+        if (isShiftDown) {
+            const euler = new THREE.Euler().setFromQuaternion(selectedObject.quaternion, 'YXZ');
+            euler.x = Math.round(euler.x / snapAngle) * snapAngle;
+            euler.y = Math.round(euler.y / snapAngle) * snapAngle;
+            euler.z = Math.round(euler.z / snapAngle) * snapAngle;
+            selectedObject.quaternion.setFromEuler(euler);
         }
     }
 });
 
 transformControls.addEventListener('mouseUp', function () {
-    if (selectedObject && oldRotation !== null) {
+    if (selectedObject && oldRotation) {
         const newRotation = selectedObject.rotation.clone();
         if (!oldRotation.equals(newRotation)) {
             history.execute(new RotationCommand(selectedObject, oldRotation, newRotation));
         }
-        oldRotation = null;
     }
-    // 회전 모드일 때 TransformControls 작업이 끝나면 OrbitControls를 다시 활성화
-    if (rotateMode) {
-        controls.enabled = true;
-    }
+    oldRotation = null; // 상태 초기화
+    controls.enabled = true;
+});
+
+transformControls.addEventListener('mouseDown', function() {
+    controls.enabled = false;
 });
 controls.enableDamping = false; // 댐핑 비활성화
 controls.mouseButtons = {
@@ -250,8 +258,14 @@ renderer.domElement.addEventListener('wheel', (event) => {
     controls.update();
 }, { passive: false });
 
-// --- Undo/Redo 리스너 ---
+let isShiftDown = false;
+
+// --- Undo/Redo 및 키보드 단축키 리스너 ---
 window.addEventListener('keydown', (event) => {
+    if (event.key === 'Shift') {
+        isShiftDown = true;
+    }
+
     // 입력 필드에 있을 때는 작동하지 않도록
     if (event.target.tagName.toUpperCase() === 'INPUT' || event.target.tagName.toUpperCase() === 'TEXTAREA') {
         return;
@@ -259,7 +273,24 @@ window.addEventListener('keydown', (event) => {
 
     // 특정 작업이 진행 중일 때는 모드 전환 단축키 비활성화
     if (isDrawing || isExtruding || isExtrudingX || isExtrudingZ || isDraggingSelected || transformControls.dragging) {
-        return;
+        // Shift 키는 항상 감지해야 하므로 여기서 return하지 않음
+    } else {
+        // 모드 전환 단축키 처리
+        const toolSelectBtn = document.getElementById('tool-select'); // 선택 모드 (s)
+        const toolRefreshBtn = document.getElementById('tool-refresh'); // 회전 모드 (r)
+        const toolScaleBtn = document.getElementById('tool-scale'); // 그리기 모드 (d)
+
+        switch (event.key.toLowerCase()) {
+            case 'r':
+                if (toolRefreshBtn) toolRefreshBtn.click();
+                break;
+            case 's':
+                if (toolSelectBtn) toolSelectBtn.click();
+                break;
+            case 'd':
+                if (toolScaleBtn) toolScaleBtn.click();
+                break;
+        }
     }
 
     // Ctrl/Cmd + Z/Y (Undo/Redo) 처리
@@ -271,23 +302,18 @@ window.addEventListener('keydown', (event) => {
             event.preventDefault();
             history.redo();
         }
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (selectedObject && !moveMode) { // 이동 모드가 아닐 때만 삭제
+             // 사용자가 실수로 삭제하는 것을 방지하기 위해 추가적인 확인을 거치지 않음
+        } else if (selectedObject && moveMode) {
+            deleteObject(selectedObject);
+        }
     }
+});
 
-    // 모드 전환 단축키 처리
-    const toolSelectBtn = document.getElementById('tool-select'); // 선택 모드 (c)
-    const toolRefreshBtn = document.getElementById('tool-refresh'); // 회전 모드 (r)
-    const toolScaleBtn = document.getElementById('tool-scale'); // 그리기 모드 (d)
-
-    switch (event.key.toLowerCase()) {
-        case 'r':
-            if (toolRefreshBtn) toolRefreshBtn.click();
-            break;
-        case 's':
-            if (toolSelectBtn) toolSelectBtn.click();
-            break;
-        case 'd':
-            if (toolScaleBtn) toolScaleBtn.click();
-            break;
+window.addEventListener('keyup', (event) => {
+    if (event.key === 'Shift') {
+        isShiftDown = false;
     }
 });
 
@@ -420,40 +446,15 @@ function hideContextMenu() {
 }
 
 function deleteObject(objectToDelete) {
-    // 객체를 배열에서 제거
-    const index = drawableObjects.indexOf(objectToDelete);
-    if (index > -1) {
-        drawableObjects.splice(index, 1);
-    }
-    
-    // 씬에서 제거
-    scene.remove(objectToDelete);
-    
-    // 메모리 정리
-    objectToDelete.geometry.dispose();
-    if (Array.isArray(objectToDelete.material)) {
-        objectToDelete.material.forEach(material => material.dispose());
-    } else {
-        objectToDelete.material.dispose();
-    }
-    
-    // 하이라이트 메시가 삭제된 객체를 참조하고 있다면 숨김
-    if (highlightMesh) {
-        highlightMesh.visible = false;
-    }
-    
-    // 텍스처 하이라이트도 정리
-    clearTextureHighlight();
-    
-    // 꼭짓점 목록 업데이트
-    updateAllVertices();
+    // DeleteObjectCommand에 findStackedObjectsRecursive 함수를 전달
+    const command = new DeleteObjectCommand(scene, objectToDelete, drawableObjects, findStackedObjectsRecursive);
+    history.execute(command);
+}
 
-    // 객체 목록 패널 갱신
-    renderObjectListPanel();
-
-    // 선택 하이라이트 메시가 삭제되는 객체를 참조하면 제거
-    if (selectedObject === objectToDelete) {
-        clearSelectedHighlight(selectedObject);
+// DeleteObjectCommand에서 호출할 수 있도록 전역 스코프에 함수 정의
+function clearSelectedHighlightAfterDeletion(deletedObject) {
+    if (selectedObject === deletedObject) {
+        clearSelectedHighlight();
         selectedObject = null;
     }
 }
@@ -466,30 +467,26 @@ let extrudeBaseY = null;
 let extrudeStackedObjects = [];
 let extrudeOldTransforms = [];
 function findStackedObjectsRecursive(baseObj, resultArr) {
-    // baseObj 위에 쌓인 도형들을 재귀적으로 resultArr에 추가
-    const myWidth = baseObj.geometry.parameters.width * baseObj.scale.x;
-    const myDepth = baseObj.geometry.parameters.depth * baseObj.scale.z;
-    const myMinX = baseObj.position.x - myWidth/2;
-    const myMaxX = baseObj.position.x + myWidth/2;
-    const myMinZ = baseObj.position.z - myDepth/2;
-    const myMaxZ = baseObj.position.z + myDepth/2;
-    const myTop = baseObj.position.y + (baseObj.geometry.parameters.height * baseObj.scale.y) / 2;
+    // Use a bounding box for checking overlap
+    const baseBox = new THREE.Box3().setFromObject(baseObj);
+
     drawableObjects.forEach(obj => {
-        if (obj === baseObj || resultArr.includes(obj) || !obj.geometry) return;
-        const objWidth = obj.geometry.parameters.width * obj.scale.x;
-        const objDepth = obj.geometry.parameters.depth * obj.scale.z;
-        const objMinX = obj.position.x - objWidth/2;
-        const objMaxX = obj.position.x + objWidth/2;
-        const objMinZ = obj.position.z - objDepth/2;
-        const objMaxZ = obj.position.z + objDepth/2;
-        const overlapX = Math.max(0, Math.min(objMaxX, myMaxX) - Math.max(objMinX, myMinX));
-        const overlapZ = Math.max(0, Math.min(objMaxZ, myMaxZ) - Math.max(objMinZ, myMinZ));
-        const overlapRatioX = overlapX / Math.min(objWidth, myWidth);
-        const overlapRatioZ = overlapZ / Math.min(objDepth, myDepth);
-        const objHeight = obj.geometry.parameters.height * obj.scale.y;
-        const objBottom = obj.position.y - objHeight / 2;
-        if (overlapRatioX > 0.1 && overlapRatioZ > 0.1 && Math.abs(objBottom - myTop) < 0.15) {
+        if (obj === baseObj || resultArr.includes(obj) || !obj.geometry) {
+            return;
+        }
+
+        const objBox = new THREE.Box3().setFromObject(obj);
+
+        // Check for horizontal overlap on the XZ plane
+        const overlapsX = baseBox.max.x > objBox.min.x && baseBox.min.x < objBox.max.x;
+        const overlapsZ = baseBox.max.z > objBox.min.z && baseBox.min.z < objBox.max.z;
+        
+        // Check if the object is vertically stacked on top with a small tolerance
+        const isStackedOnTop = Math.abs(objBox.min.y - baseBox.max.y) < 0.05;
+
+        if (overlapsX && overlapsZ && isStackedOnTop) {
             resultArr.push(obj);
+            // Recursively find objects stacked on top of the current one
             findStackedObjectsRecursive(obj, resultArr);
         }
     });
@@ -1104,19 +1101,19 @@ function updateHighlight() {
         const face = intersection.face;
         const object = intersection.object;
 
-        // 윗면(y축), 옆면(x축), 앞/뒤면(z축)만 하이라이트
-        if (face.normal.y > 0.99 || Math.abs(face.normal.x) > 0.99 || Math.abs(face.normal.z) > 0.99) {
+        // Only highlight top (Y), side (X), and front/back (Z) faces
+        if (Math.abs(face.normal.y) > 0.99 || Math.abs(face.normal.x) > 0.99 || Math.abs(face.normal.z) > 0.99) {
             hovered = true;
 
             if (!highlightMesh) {
                 const highlightMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthTest: false });
                 const highlightGeometry = new THREE.PlaneGeometry(1, 1);
                 highlightMesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
-                highlightMesh.renderOrder = 9999; // 항상 최상단에 렌더링
+                highlightMesh.renderOrder = 9999; // Render on top of everything
                 scene.add(highlightMesh);
             }
 
-            // Set highlight color based on face normal
+            // Set highlight color based on the local face normal
             if (face.normal.y > 0.99 || face.normal.y < -0.99) { // Top or Bottom face
                 highlightMesh.material.color.set(0x00ff00); // Green for Y-axis
             } else if (Math.abs(face.normal.x) > 0.99) { // Side face (X-axis)
@@ -1125,62 +1122,63 @@ function updateHighlight() {
                 highlightMesh.material.color.set(0x0000ff); // Blue for Z-axis
             }
             
-            // 객체의 월드 변환을 최신 상태로 업데이트
             object.updateMatrixWorld();
 
-            // Calculate world face normal
-            const worldFaceNormal = face.normal.clone().applyQuaternion(object.quaternion).normalize();
-
-            // Get the local dimensions of the object
+            // --- Position Calculation ---
             const originalWidth = object.geometry.parameters.width;
             const originalHeight = object.geometry.parameters.height;
             const originalDepth = object.geometry.parameters.depth;
-
-            // Calculate the local center of the intersected face
+            
             let faceCenterLocal = new THREE.Vector3();
-            if (Math.abs(face.normal.y) > 0.99) { // Top or Bottom face
+            if (Math.abs(face.normal.y) > 0.99) {
                 faceCenterLocal.y = (face.normal.y > 0 ? 1 : -1) * originalHeight / 2;
-            } else if (Math.abs(face.normal.x) > 0.99) { // Side face (X-axis)
+            } else if (Math.abs(face.normal.x) > 0.99) {
                 faceCenterLocal.x = (face.normal.x > 0 ? 1 : -1) * originalWidth / 2;
-            } else if (Math.abs(face.normal.z) > 0.99) { // Side face (Z-axis)
+            } else if (Math.abs(face.normal.z) > 0.99) {
                 faceCenterLocal.z = (face.normal.z > 0 ? 1 : -1) * originalDepth / 2;
             }
-
-            // Transform the local face center to world coordinates
+            
             const faceCenterWorld = faceCenterLocal.applyMatrix4(object.matrixWorld);
-            highlightMesh.position.copy(faceCenterWorld);
 
-            // Apply a small offset along the world face normal to prevent z-fighting
-            const offset = worldFaceNormal.clone().multiplyScalar(0.01); // Small offset
-            highlightMesh.position.add(offset);
-
-            // Set highlight mesh rotation to align with the world face normal
-            // PlaneGeometry's default normal is (0, 0, 1)
-            highlightMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), worldFaceNormal);
-
-            // Determine target width and height for the highlight mesh based on the face type
-            // These dimensions should be the scaled dimensions of the object's face
-            let targetWidth, targetHeight;
+            // --- Rotation and Scale Calculation (New Robust Logic) ---
             const scaledWidth = originalWidth * object.scale.x;
             const scaledHeight = originalHeight * object.scale.y;
             const scaledDepth = originalDepth * object.scale.z;
 
+            const localRotation = new THREE.Quaternion();
+
             if (Math.abs(face.normal.y) > 0.99) { // Top or Bottom face
-                targetWidth = scaledWidth;
-                targetHeight = scaledDepth;
+                highlightMesh.scale.set(scaledWidth, scaledDepth, 1);
+                const angle = face.normal.y > 0 ? -Math.PI / 2 : Math.PI / 2;
+                localRotation.setFromAxisAngle(new THREE.Vector3(1, 0, 0), angle);
             } else if (Math.abs(face.normal.x) > 0.99) { // Side face (X-axis)
-                targetWidth = scaledDepth; // Width of X-face is object's depth
-                targetHeight = scaledHeight; // Height of X-face is object's height
+                highlightMesh.scale.set(scaledDepth, scaledHeight, 1);
+                const angle = face.normal.x > 0 ? Math.PI / 2 : -Math.PI / 2;
+                localRotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
             } else if (Math.abs(face.normal.z) > 0.99) { // Side face (Z-axis)
-                targetWidth = scaledWidth; // Width of Z-face is object's width
-                targetHeight = scaledHeight; // Height of Z-face is object's height
+                highlightMesh.scale.set(scaledWidth, scaledHeight, 1);
+                if (face.normal.z < 0) {
+                    localRotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+                }
             }
-            highlightMesh.scale.set(targetWidth, targetHeight, 1);
+
+            // Combine object's world rotation with the local rotation for the highlight
+            highlightMesh.quaternion.copy(object.quaternion).multiply(localRotation);
+
+            // --- Final Position with Offset ---
+            const normalMatrix = new THREE.Matrix3().getNormalMatrix(object.matrixWorld);
+            const worldFaceNormal = face.normal.clone().applyMatrix3(normalMatrix).normalize();
+            const offset = worldFaceNormal.clone().multiplyScalar(0.01);
+            highlightMesh.position.copy(faceCenterWorld).add(offset);
 
             highlightMesh.visible = true;
+        } else {
+             if (highlightMesh) {
+                highlightMesh.visible = false;
+            }
         }
     } else {
-        if (!hovered && highlightMesh) {
+        if (highlightMesh) {
             highlightMesh.visible = false;
         }
     }
@@ -1673,40 +1671,26 @@ window.addEventListener('DOMContentLoaded', () => {
     const closeButton = helpGuideModal.querySelector('.close-button');
 
     if (helpGuideButton && helpGuideModal && closeButton) {
-        helpGuideButton.addEventListener('click', () => {
-            console.log('Modal open button clicked.');
-            console.log('Before display: ', helpGuideModal.style.display);
-            console.log('Before classList: ', helpGuideModal.classList.value);
-            console.log('Before body overflow: ', document.body.style.overflow);
-
-            helpGuideModal.style.display = 'flex'; // Set display to flex immediately for centering
-            // Force reflow to ensure display property is applied before transition
-            helpGuideModal.offsetWidth; 
-            helpGuideModal.classList.add('show');
-            document.body.style.overflow = 'hidden'; // Prevent body scrolling
-            if (window.feather) feather.replace(); // Render Feather icons inside modal
-
-            console.log('After display (setTimeout): ', helpGuideModal.style.display);
-            console.log('After classList (setTimeout): ', helpGuideModal.classList.value);
-            console.log('After body overflow (setTimeout): ', document.body.style.overflow);
-        });
-
-        const closeModal = () => {
-            console.log('closeModal called.');
-            console.log('Before classList (closeModal): ', helpGuideModal.classList.value);
-            console.log('Before body overflow (closeModal): ', document.body.style.overflow);
-
-            helpGuideModal.classList.remove('show');
-            helpGuideModal.addEventListener('transitionend', function handler() {
-                console.log('transitionend fired.');
-                helpGuideModal.style.display = 'none';
-                document.body.style.overflow = 'auto'; // Re-enable body scrolling
-                helpGuideModal.removeEventListener('transitionend', handler);
-                console.log('After display (transitionend): ', helpGuideModal.style.display);
-                console.log('After body overflow (transitionend): ', document.body.style.overflow);
-            }, { once: true }); // Use { once: true } to automatically remove the listener
+        const openModal = () => {
+            helpGuideModal.style.display = 'flex';
+            // A short delay is needed to allow the browser to apply the 'display' change
+            // before the 'opacity' transition starts.
+            setTimeout(() => {
+                helpGuideModal.classList.add('show');
+                document.body.style.overflow = 'hidden';
+                if (window.feather) feather.replace();
+            }, 10);
         };
 
+        const closeModal = () => {
+            helpGuideModal.classList.remove('show');
+            helpGuideModal.addEventListener('transitionend', () => {
+                helpGuideModal.style.display = 'none';
+                document.body.style.overflow = 'auto';
+            }, { once: true });
+        };
+
+        helpGuideButton.addEventListener('click', openModal);
         closeButton.addEventListener('click', closeModal);
 
         // Close modal on outside click
@@ -1863,16 +1847,19 @@ function highlightSelected(obj) {
         highlightOverlayMesh = null;
     }
     highlightOverlayMesh = new THREE.Mesh(
-        obj.geometry.clone(),
-        new THREE.MeshStandardMaterial({
-            color: 0x3399ff,
-            transparent: true,
-            opacity: 0.4,
-            depthWrite: false,
-            depthTest: false, // 추가
-            side: THREE.DoubleSide
-        })
-    );
+            obj.geometry.clone(),
+            new THREE.MeshBasicMaterial({ // BasicMaterial로 변경하여 자체 발광 효과
+                color: 0xFFFFFF, // 흰색으로 코어 색상
+                transparent: true,
+                opacity: 0.8, // 더 불투명하게
+                depthWrite: false,
+                depthTest: false,
+                side: THREE.DoubleSide
+            })
+        );
+        // 광원 효과를 위한 추가적인 쉐이더 또는 후처리 필요 (Three.js에서는 CSS처럼 box-shadow 직접 적용 불가)
+        // 여기서는 BasicMaterial의 자체 발광 효과와 높은 투명도로 광원 느낌을 냅니다.
+        // 더 복잡한 광원 효과를 위해서는 Three.js의 Post-processing 또는 custom shader가 필요합니다.
     highlightOverlayMesh.position.copy(obj.position);
     highlightOverlayMesh.rotation.copy(obj.rotation);
     highlightOverlayMesh.scale.copy(obj.scale);

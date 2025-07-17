@@ -517,14 +517,12 @@ body {
     align-items: center; /* Center vertically */
     justify-content: center; /* Center horizontally */
     opacity: 0; /* Start hidden for animation */
-    transition: opacity 0.3s ease-in-out, visibility 0s linear 0.3s; /* Fade in/out animation, visibility delay */
-    visibility: hidden; /* Hidden by default */
+    transition: opacity 0.3s ease-in-out;
     pointer-events: none; /* Do not capture events when hidden */
 }
 
 .modal.show {
     opacity: 1;
-    visibility: visible; /* Make visible */
     pointer-events: auto; /* Capture events when visible */
     display: flex; /* Use flexbox for centering */
 }

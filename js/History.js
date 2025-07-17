@@ -169,6 +169,66 @@ class RotationCommand extends Command {
 }
 
 // History 관리 클래스
+class DeleteObjectCommand {
+    constructor(scene, objectToDelete, drawableObjects, findStackedObjectsFunc) {
+        this.scene = scene;
+        this.objectToDelete = objectToDelete;
+        this.drawableObjects = drawableObjects;
+        this.findStackedObjectsFunc = findStackedObjectsFunc;
+
+        this.deleteIndex = -1;
+        this.stackedObjects = [];
+        this.stackedObjectsOldTransforms = [];
+        this.stackedObjectsNewTransforms = [];
+    }
+
+    execute() {
+        // 1. Find stacked objects and store their original state
+        this.findStackedObjectsFunc(this.objectToDelete, this.stackedObjects);
+        this.stackedObjectsOldTransforms = this.stackedObjects.map(obj => ({
+            position: obj.position.clone(),
+            rotation: obj.rotation.clone(),
+            scale: obj.scale.clone(),
+        }));
+
+        // 2. Remove the main object from both scene and drawableObjects array
+        this.deleteIndex = this.drawableObjects.indexOf(this.objectToDelete);
+        if (this.deleteIndex > -1) {
+            this.drawableObjects.splice(this.deleteIndex, 1);
+            this.scene.remove(this.objectToDelete);
+        }
+
+        
+
+        // 4. Update global state
+        if (typeof updateAllVertices === 'function') updateAllVertices();
+        if (typeof renderObjectListPanel === 'function') renderObjectListPanel();
+        if (typeof clearSelectedHighlightAfterDeletion === 'function') {
+            clearSelectedHighlightAfterDeletion(this.objectToDelete);
+        }
+    }
+
+    undo() {
+        // 1. Restore the deleted object
+        if (this.deleteIndex > -1) {
+            this.drawableObjects.splice(this.deleteIndex, 0, this.objectToDelete);
+            this.scene.add(this.objectToDelete);
+        }
+
+        // 2. Restore stacked objects to their original positions
+        this.stackedObjects.forEach((obj, i) => {
+            const oldTransform = this.stackedObjectsOldTransforms[i];
+            obj.position.copy(oldTransform.position);
+            obj.rotation.copy(oldTransform.rotation);
+            obj.scale.copy(oldTransform.scale);
+        });
+
+        // 3. Update global state
+        if (typeof updateAllVertices === 'function') updateAllVertices();
+        if (typeof renderObjectListPanel === 'function') renderObjectListPanel();
+    }
+}
+
 class History {
     constructor() {
         this.undoStack = [];
