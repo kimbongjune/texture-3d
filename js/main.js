@@ -467,26 +467,22 @@ let extrudeBaseY = null;
 let extrudeStackedObjects = [];
 let extrudeOldTransforms = [];
 function findStackedObjectsRecursive(baseObj, resultArr) {
-    // Use a bounding box for checking overlap
     const baseBox = new THREE.Box3().setFromObject(baseObj);
 
     drawableObjects.forEach(obj => {
-        if (obj === baseObj || resultArr.includes(obj) || !obj.geometry) {
-            return;
-        }
+        if (obj === baseObj || resultArr.includes(obj) || !obj.geometry) return;
 
         const objBox = new THREE.Box3().setFromObject(obj);
 
-        // Check for horizontal overlap on the XZ plane
-        const overlapsX = baseBox.max.x > objBox.min.x && baseBox.min.x < objBox.max.x;
-        const overlapsZ = baseBox.max.z > objBox.min.z && baseBox.min.z < objBox.max.z;
-        
-        // Check if the object is vertically stacked on top with a small tolerance
-        const isStackedOnTop = Math.abs(objBox.min.y - baseBox.max.y) < 0.05;
+        // Check for horizontal overlap
+        const overlapX = Math.max(0, Math.min(objBox.max.x, baseBox.max.x) - Math.max(objBox.min.x, baseBox.min.x));
+        const overlapZ = Math.max(0, Math.min(objBox.max.z, baseBox.max.z) - Math.max(objBox.min.z, baseBox.min.z));
 
-        if (overlapsX && overlapsZ && isStackedOnTop) {
+        // Check if obj is directly on top of baseObj
+        const isOnTop = Math.abs(objBox.min.y - baseBox.max.y) < 0.01;
+
+        if (overlapX > 0 && overlapZ > 0 && isOnTop) {
             resultArr.push(obj);
-            // Recursively find objects stacked on top of the current one
             findStackedObjectsRecursive(obj, resultArr);
         }
     });
@@ -1847,19 +1843,16 @@ function highlightSelected(obj) {
         highlightOverlayMesh = null;
     }
     highlightOverlayMesh = new THREE.Mesh(
-            obj.geometry.clone(),
-            new THREE.MeshBasicMaterial({ // BasicMaterial로 변경하여 자체 발광 효과
-                color: 0xFFFFFF, // 흰색으로 코어 색상
-                transparent: true,
-                opacity: 0.8, // 더 불투명하게
-                depthWrite: false,
-                depthTest: false,
-                side: THREE.DoubleSide
-            })
-        );
-        // 광원 효과를 위한 추가적인 쉐이더 또는 후처리 필요 (Three.js에서는 CSS처럼 box-shadow 직접 적용 불가)
-        // 여기서는 BasicMaterial의 자체 발광 효과와 높은 투명도로 광원 느낌을 냅니다.
-        // 더 복잡한 광원 효과를 위해서는 Three.js의 Post-processing 또는 custom shader가 필요합니다.
+        obj.geometry.clone(),
+        new THREE.MeshStandardMaterial({
+            color: 0x3399ff,
+            transparent: true,
+            opacity: 0.4,
+            depthWrite: false,
+            depthTest: false, // 추가
+            side: THREE.DoubleSide
+        })
+    );
     highlightOverlayMesh.position.copy(obj.position);
     highlightOverlayMesh.rotation.copy(obj.rotation);
     highlightOverlayMesh.scale.copy(obj.scale);
