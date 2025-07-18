@@ -339,6 +339,19 @@ window.addEventListener('keydown', (event) => {
             case 'd':
                 if (toolScaleBtn) toolScaleBtn.click();
                 break;
+            case 'm': // 객체 목록 토글
+                toggleObjectListPanel();
+                break;
+            case 'l': // 조명 토글
+                const toggleLightMenu = document.getElementById('toggle-light');
+                if (toggleLightMenu) {
+                    const isOn = !toggleLightMenu.querySelector('.check').textContent;
+                    setLightMenuState(isOn);
+                }
+                break;
+            case 'g': // 격자 토글
+                toggleGridVisibility();
+                break;
         }
     }
 
@@ -2324,23 +2337,29 @@ history.redo = function() {
 // === 격자 보기 토글 및 체크박스 표시 ===
 window.addEventListener('DOMContentLoaded', () => {
     const gridMenu = document.getElementById('toggle-grid');
-    const checkSpan = gridMenu ? gridMenu.querySelector('.check') : null;
-    if (gridMenu && checkSpan) {
+    if (gridMenu) {
         // 초기 상태 반영
-        function updateGridCheck() {
-            if (gridHelper.visible) {
-                checkSpan.textContent = '✓';
-            } else {
-                checkSpan.textContent = '';
-            }
-        }
         updateGridCheck();
-        gridMenu.addEventListener('click', () => {
-            gridHelper.visible = !gridHelper.visible;
-            updateGridCheck();
-        });
+        gridMenu.addEventListener('click', toggleGridVisibility);
     }
-}); 
+});
+
+function toggleGridVisibility() {
+    gridHelper.visible = !gridHelper.visible;
+    updateGridCheck();
+}
+
+function updateGridCheck() {
+    const gridMenu = document.getElementById('toggle-grid');
+    const checkSpan = gridMenu ? gridMenu.querySelector('.check') : null;
+    if (checkSpan) {
+        if (gridHelper.visible) {
+            checkSpan.textContent = '✓';
+        } else {
+            checkSpan.textContent = '';
+        }
+    }
+} 
 
 // === 툴바 버튼 활성화 관리 (아이콘 종류와 무관하게 동작) ===
 window.addEventListener('DOMContentLoaded', () => {
@@ -3111,36 +3130,45 @@ function setupObjectListPanelAutoUpdate() {
 window.addEventListener('DOMContentLoaded', () => {
     renderObjectListPanel();
     setupObjectListPanelAutoUpdate();
+    // Initial setup for object list panel visibility and icon
     const objectListToggle = document.getElementById('object-list-toggle');
     const objectListPanel = document.getElementById('object-list-panel');
     if (objectListToggle && objectListPanel) {
-        // 햄버거/X 아이콘 전환 애니메이션(즉시 교체, CSS로만 전환)
-        function setHamburgerIcon(isMenu) {
-            objectListToggle.innerHTML = isMenu ? "<span data-feather='menu'></span>" : "<span data-feather='x'></span>";
-            if (window.feather) window.feather.replace();
-        }
-        setHamburgerIcon(true);
-        objectListToggle.addEventListener('click', () => {
-            if (objectListPanel.classList.contains('show')) {
-                // 사라질 때 애니메이션 적용
-                objectListPanel.classList.remove('show');
-                objectListPanel.classList.add('hide');
-                setHamburgerIcon(true);
-                // 애니메이션 끝나면 display:none 및 .hide 제거
-                objectListPanel.addEventListener('animationend', function handler(e) {
-                    if (e.animationName === 'slideOutLeft') {
-                        objectListPanel.style.display = 'none';
-                        objectListPanel.classList.remove('hide');
-                    }
-                    objectListPanel.removeEventListener('animationend', handler);
-                });
-            } else {
-                objectListPanel.style.display = 'block';
-                objectListPanel.classList.remove('hide');
-                objectListPanel.classList.add('show');
-                setHamburgerIcon(false);
-                renderObjectListPanel();
-            }
-        });
+        // Set initial icon
+        objectListToggle.innerHTML = "<span data-feather='menu'></span>";
+        if (window.feather) window.feather.replace();
+        // Add click listener to the toggle button
+        objectListToggle.addEventListener('click', toggleObjectListPanel);
     }
 });
+
+// Helper function to toggle object list panel
+function toggleObjectListPanel() {
+    const objectListToggle = document.getElementById('object-list-toggle');
+    const objectListPanel = document.getElementById('object-list-panel');
+    if (!objectListToggle || !objectListPanel) return;
+
+    function setHamburgerIcon(isMenu) {
+        objectListToggle.innerHTML = isMenu ? "<span data-feather='menu'></span>" : "<span data-feather='x'></span>";
+        if (window.feather) window.feather.replace();
+    }
+
+    if (objectListPanel.classList.contains('show')) {
+        objectListPanel.classList.remove('show');
+        objectListPanel.classList.add('hide');
+        setHamburgerIcon(true);
+        objectListPanel.addEventListener('animationend', function handler(e) {
+            if (e.animationName === 'slideOutLeft') {
+                objectListPanel.style.display = 'none';
+                objectListPanel.classList.remove('hide');
+            }
+            objectListPanel.removeEventListener('animationend', handler);
+        }, { once: true });
+    } else {
+        objectListPanel.style.display = 'block';
+        objectListPanel.classList.remove('hide');
+        objectListPanel.classList.add('show');
+        setHamburgerIcon(false);
+        renderObjectListPanel();
+    }
+}
