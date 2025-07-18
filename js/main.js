@@ -36,15 +36,11 @@ const transformControls = new TransformControls(camera, renderer.domElement);
 scene.add(transformControls);
 transformControls.size = 1.5; // 회전 가이드 크기 조정
 
-let oldRotation = null;
+let oldQuaternion = null;
 const snapAngle = Math.PI / 12; // 15도 스냅
 
 transformControls.addEventListener('objectChange', function () {
     if (transformControls.dragging && selectedObject) {
-        // 드래그 시작 후 첫 변경 시에만 oldRotation 기록
-        if (oldRotation === null) {
-            oldRotation = selectedObject.rotation.clone();
-        }
         // Shift 키 누를 때 스냅 적용
         if (isShiftDown) {
             const euler = new THREE.Euler().setFromQuaternion(selectedObject.quaternion, 'YXZ');
@@ -57,17 +53,20 @@ transformControls.addEventListener('objectChange', function () {
 });
 
 transformControls.addEventListener('mouseUp', function () {
-    if (selectedObject && oldRotation) {
-        const newRotation = selectedObject.rotation.clone();
-        if (!oldRotation.equals(newRotation)) {
-            history.execute(new RotationCommand(selectedObject, oldRotation, newRotation));
+    if (selectedObject && oldQuaternion) {
+        const newQuaternion = selectedObject.quaternion.clone();
+        if (!oldQuaternion.equals(newQuaternion)) {
+            history.execute(new RotationCommand(selectedObject, oldQuaternion, newQuaternion));
         }
     }
-    oldRotation = null; // 상태 초기화
+    oldQuaternion = null; // 상태 초기화
     controls.enabled = true;
 });
 
 transformControls.addEventListener('mouseDown', function() {
+    if (selectedObject) {
+        oldQuaternion = selectedObject.quaternion.clone();
+    }
     controls.enabled = false;
 });
 controls.enableDamping = false; // 댐핑 비활성화

@@ -166,19 +166,19 @@ class SelectGroupCommand extends Command {
 
 // 5. 객체 회전 Command
 class RotationCommand extends Command {
-    constructor(object, oldRotation, newRotation) {
+    constructor(object, oldQuaternion, newQuaternion) {
         super();
         this.object = object;
-        this.oldRotation = oldRotation;
-        this.newRotation = newRotation;
+        this.oldQuaternion = oldQuaternion;
+        this.newQuaternion = newQuaternion;
     }
 
     execute() {
-        this.object.rotation.copy(this.newRotation);
+        this.object.quaternion.copy(this.newQuaternion);
     }
 
     undo() {
-        this.object.rotation.copy(this.oldRotation);
+        this.object.quaternion.copy(this.oldQuaternion);
     }
 }
 
