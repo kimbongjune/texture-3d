@@ -2517,98 +2517,77 @@ renderer.domElement.addEventListener('pointerdown', function(event) {
 renderer.domElement.addEventListener('pointermove', function(event) {
     if (moveMode && isDraggingSelected && selectedObject && event.buttons === 1) {
         updateMouseAndRaycaster(event);
-        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -selectedObject.position.y);
-        raycaster.setFromCamera(mouse, camera);
-        const intersect = new THREE.Vector3();
-        if (raycaster.ray.intersectPlane(plane, intersect)) {
-            let newPos = intersect.clone().add(dragOffset);
-            clearSelectSnapGuideLines();
-            const snapThreshold = 0.1;
-            const myWidth = selectedObject.geometry.parameters.width * selectedObject.scale.x;
-            const myDepth = selectedObject.geometry.parameters.depth * selectedObject.scale.z;
+
+        // 1. 드래그 대상 업데이트: 다른 객체 또는 바닥 평면을 기준으로
+        let newPos;
+        const otherObjects = drawableObjects.filter(obj => !dragGroup.includes(obj)); // 자기 자신과 그룹 멤버 제외
+        const intersects = raycaster.intersectObjects(otherObjects);
+
+        if (intersects.length > 0) {
+            // 다른 객체 위에 마우스가 있을 경우, 해당 표면을 기준으로 위치 계산
+            const intersection = intersects[0];
             const myHeight = selectedObject.geometry.parameters.height * selectedObject.scale.y;
-            // 내 도형의 x/z 관련 모든 좌표
-            const myX = [newPos.x, newPos.x - myWidth/2, newPos.x + myWidth/2];
-            const myZ = [newPos.z, newPos.z - myDepth/2, newPos.z + myDepth/2];
-            let snapX = newPos.x;
-            let snapZ = newPos.z;
-            let snappedX = false, snappedZ = false;
-            drawableObjects.forEach(obj => {
-                if (obj === selectedObject) return;
-                const objWidth = obj.geometry.parameters.width * obj.scale.x;
-                const objDepth = obj.geometry.parameters.depth * obj.scale.z;
-                // 상대 도형의 x/z 관련 모든 좌표
-                const objX = [obj.position.x, obj.position.x - objWidth/2, obj.position.x + objWidth/2];
-                const objZ = [obj.position.z, obj.position.z - objDepth/2, obj.position.z + objDepth/2];
-                // x축 모든 조합
-                myX.forEach(mx => {
-                    objX.forEach(ox => {
-                        if (Math.abs(mx - ox) < snapThreshold) {
-                            snapX = newPos.x + (ox - mx);
-                            snappedX = true;
-                            showSelectSnapGuideLine('x', ox, obj.position.z, objDepth);
-                        }
-                    });
-                });
-                // z축 모든 조합
-                myZ.forEach(mz => {
-                    objZ.forEach(oz => {
-                        if (Math.abs(mz - oz) < snapThreshold) {
-                            snapZ = newPos.z + (oz - mz);
-                            snappedZ = true;
-                            showSelectSnapGuideLine('z', oz, obj.position.x, objWidth);
-                        }
-                    });
-                });
-            });
-            if (snappedX) newPos.x = snapX;
-            if (snappedZ) newPos.z = snapZ;
-
-            // 그룹 전체 이동
-            const moveDelta = newPos.clone().sub(selectedObject.position);
-            dragGroup.forEach(obj => {
-                obj.position.add(moveDelta);
-            });
-            // === 쌓기(y축) ===
-            // 마우스 아래에 도형이 있으면, 내 도형의 x/z 바닥 평면이 그 도형의 x/z 평면과 겹치면 쌓기
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(drawableObjects.filter(obj => obj !== selectedObject));
-            if (intersects.length > 0) {
-                const underObj = intersects[0].object;
-                const underWidth = underObj.geometry.parameters.width * underObj.scale.x;
-                const underDepth = underObj.geometry.parameters.depth * underObj.scale.z;
-                const underHeight = underObj.geometry.parameters.height * underObj.scale.y;
-                const underTop = underObj.position.y + underHeight/2;
-                // 내 도형의 x/z 바닥 평면 범위
-                const myMinX = newPos.x - myWidth/2;
-                const myMaxX = newPos.x + myWidth/2;
-                const myMinZ = newPos.z - myDepth/2;
-                const myMaxZ = newPos.z + myDepth/2;
-                // 아래 도형의 x/z 평면 범위
-                const underMinX = underObj.position.x - underWidth/2;
-                const underMaxX = underObj.position.x + underWidth/2;
-                const underMinZ = underObj.position.z - underDepth/2;
-                const underMaxZ = underObj.position.z + underDepth/2;
-                // x, z축으로 겹치는지 확인
-                const isOverlapX = myMaxX > underMinX && myMinX < underMaxX;
-                const isOverlapZ = myMaxZ > underMinZ && myMinZ < underMaxZ;
-                if (isOverlapX && isOverlapZ) {
-                    newPos.y = underTop + myHeight/2;
-                } else {
-                    // 바닥에 붙이기
-                    newPos.y = myHeight/2;
-                }
+            newPos = intersection.point.clone();
+            newPos.y = intersection.object.position.y + (intersection.object.geometry.parameters.height * intersection.object.scale.y) / 2 + myHeight / 2;
+        } else {
+            // 허공에 있을 경우, 바닥(y=0) 평면을 기준으로 위치 계산
+            const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+            const intersectPoint = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(groundPlane, intersectPoint)) {
+                newPos = intersectPoint.clone();
+                newPos.y = (selectedObject.geometry.parameters.height * selectedObject.scale.y) / 2; // Ensure object is on top of the ground
+                newPos.x += dragOffset.x; // Apply x offset
+                newPos.z += dragOffset.z; // Apply z offset
             } else {
-                // 바닥에 붙이기
-                newPos.y = myHeight/2;
+                return; // 교차점이 없으면 이동하지 않음
             }
-
-            // 그룹 전체 이동 (y축 포함)
-            const moveDeltaWithY = newPos.clone().sub(selectedObject.position);
-            dragGroup.forEach(obj => {
-                obj.position.add(moveDeltaWithY);
-            });
         }
+
+        // 2. 스냅 로직 적용
+        clearSelectSnapGuideLines();
+        const snapThreshold = 0.1;
+        const myWidth = selectedObject.geometry.parameters.width * selectedObject.scale.x;
+        const myDepth = selectedObject.geometry.parameters.depth * selectedObject.scale.z;
+        const myX = [newPos.x, newPos.x - myWidth/2, newPos.x + myWidth/2];
+        const myZ = [newPos.z, newPos.z - myDepth/2, newPos.z + myDepth/2];
+        let snapX = newPos.x;
+        let snapZ = newPos.z;
+        let snappedX = false, snappedZ = false;
+
+        otherObjects.forEach(obj => {
+            const objWidth = obj.geometry.parameters.width * obj.scale.x;
+            const objDepth = obj.geometry.parameters.depth * obj.scale.z;
+            const objX = [obj.position.x, obj.position.x - objWidth/2, obj.position.x + objWidth/2];
+            const objZ = [obj.position.z, obj.position.z - objDepth/2, obj.position.z + objDepth/2];
+            myX.forEach(mx => {
+                objX.forEach(ox => {
+                    if (Math.abs(mx - ox) < snapThreshold) {
+                        snapX = newPos.x + (ox - mx);
+                        snappedX = true;
+                        showSelectSnapGuideLine('x', ox, obj.position.z, objDepth);
+                    }
+                });
+            });
+            myZ.forEach(mz => {
+                objZ.forEach(oz => {
+                    if (Math.abs(mz - oz) < snapThreshold) {
+                        snapZ = newPos.z + (oz - mz);
+                        snappedZ = true;
+                        showSelectSnapGuideLine('z', oz, obj.position.x, objWidth);
+                    }
+                });
+            });
+        });
+
+        if (snappedX) newPos.x = snapX;
+        if (snappedZ) newPos.z = snapZ;
+
+        // 3. 그룹 전체 이동 적용
+        const moveDelta = newPos.clone().sub(selectedObject.position);
+        dragGroup.forEach(obj => {
+            obj.position.add(moveDelta);
+        });
+
     } else {
         clearSelectSnapGuideLines();
     }
