@@ -250,7 +250,7 @@ const mouseDownPos = new THREE.Vector2();
 renderer.domElement.addEventListener('pointerdown', onPointerDown, false);
 renderer.domElement.addEventListener('pointermove', onPointerMove, false);
 renderer.domElement.addEventListener('pointerup', onPointerUp, false);
-renderer.domElement.addEventListener('click', onCanvasClick, false);
+// renderer.domElement.addEventListener('click', onCanvasClick, false); // 분리된 클릭 리스너 제거
 renderer.domElement.addEventListener('contextmenu', onRightClick, false);
 
 // 드래그 앤 드롭 이벤트 리스너 추가
@@ -385,6 +385,60 @@ async function onCanvasClick(event) {
     }
 }
 
+function updateTextureRepeatOnObject(object) {
+    if (!object || !object.material) return;
+
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+
+    materials.forEach((material, materialIndex) => {
+        if (material.map && material.userData && material.userData.textureApplyMode === 'original') {
+            const textureWidthMM = material.userData.textureWidthMM;
+            const textureHeightMM = material.userData.textureHeightMM;
+
+            if (!textureWidthMM || !textureHeightMM) return;
+
+            let faceWidthM = 1;
+            let faceHeightM = 1;
+
+            const geometry = object.geometry;
+            const scale = object.scale;
+
+            let normal = new THREE.Vector3();
+            switch (materialIndex) {
+                case 0: normal.set(1, 0, 0); break;
+                case 1: normal.set(-1, 0, 0); break;
+                case 2: normal.set(0, 1, 0); break;
+                case 3: normal.set(0, -1, 0); break;
+                case 4: normal.set(0, 0, 1); break;
+                case 5: normal.set(0, 0, -1); break;
+            }
+            normal.applyQuaternion(object.quaternion).normalize();
+
+            if (Math.abs(normal.y) > 0.99) { // Top/Bottom face
+                faceWidthM = geometry.parameters.width * scale.x;
+                faceHeightM = geometry.parameters.depth * scale.z;
+            } else if (Math.abs(normal.x) > 0.99) { // Side face (X)
+                faceWidthM = geometry.parameters.depth * scale.z;
+                faceHeightM = geometry.parameters.height * scale.y;
+            } else if (Math.abs(normal.z) > 0.99) { // Side face (Z)
+                faceWidthM = geometry.parameters.width * scale.x;
+                faceHeightM = geometry.parameters.height * scale.y;
+            }
+
+            const repeatX = faceWidthM / (textureWidthMM / 1000);
+            const repeatY = faceHeightM / (textureHeightMM / 1000);
+            
+            const isRotated = material.map.rotation && (Math.abs(material.map.rotation % Math.PI - Math.PI / 2) < 0.01);
+
+            if (isRotated) {
+                 material.map.repeat.set(repeatY, repeatX);
+            } else {
+                 material.map.repeat.set(repeatX, repeatY);
+            }
+        }
+    });
+}
+
 function applyTextureToFace(object, materialIndex, textureSrc, mode, oldMaterial) {
     const textureLoader = new THREE.TextureLoader();
     return new Promise((resolve) => {
@@ -482,6 +536,31 @@ function applyTextureToFace(object, materialIndex, textureSrc, mode, oldMaterial
                 map: texture,
                 side: THREE.DoubleSide
             });
+            
+            // Store metadata in the new material for dynamic updates
+            newMaterial.userData.textureApplyMode = mode;
+            newMaterial.userData.textureSrc = textureSrc;
+            if (mode === 'original') {
+                let relativeTextureSrc = textureSrc;
+                if (textureSrc.startsWith('http://') || textureSrc.startsWith('https://')) {
+                    try {
+                        const url = new URL(textureSrc);
+                        const texturesPathIndex = url.pathname.indexOf('/textures/');
+                        if (texturesPathIndex !== -1) {
+                            relativeTextureSrc = url.pathname.substring(texturesPathIndex + 1);
+                        } else {
+                            relativeTextureSrc = url.pathname.substring(url.pathname.lastIndexOf('/') + 1);
+                        }
+                    } catch (e) {
+                        relativeTextureSrc = textureSrc;
+                    }
+                }
+                const textureOption = texturePalette.querySelector(`.texture-option[data-texture="${relativeTextureSrc}"]`);
+                if (textureOption) {
+                    newMaterial.userData.textureWidthMM = parseFloat(textureOption.dataset.x);
+                    newMaterial.userData.textureHeightMM = parseFloat(textureOption.dataset.y);
+                }
+            }
 
             const command = new TextureCommand(object, materialIndex, oldMaterial, newMaterial, textureSrc, mode);
             resolve(command); // Command 인스턴스를 Promise로 반환
@@ -551,6 +630,7 @@ class RotateTextureCommand {
 
         this.object.material[this.materialIndex] = this.newMaterial;
         this.object.material.needsUpdate = true; // Ensure the object's material array is updated
+        updateTextureRepeatOnObject(this.object);
         console.log('RotateTextureCommand execute: material after rotation', this.object.material[this.materialIndex], 'rotation:', this.object.material[this.materialIndex].map.rotation); // Debug log
     }
 
@@ -558,6 +638,7 @@ class RotateTextureCommand {
         console.log('RotateTextureCommand undo: Restoring old material for', this.object.uuid, 'at index', this.materialIndex); // Debug log
         this.object.material[this.materialIndex] = this.oldMaterial;
         this.object.material.needsUpdate = true;
+        updateTextureRepeatOnObject(this.object);
         console.log('RotateTextureCommand undo: material after undo', this.object.material[this.materialIndex], 'map:', this.object.material[this.materialIndex].map); // Debug log
     }
 }
@@ -659,6 +740,16 @@ function showContextMenu(x, y, targetObject, materialIndex) {
     console.log('showContextMenu: targetObject', targetObject.uuid, 'materialIndex', materialIndex); // Debug log
     if (!contextMenu) {
         contextMenu = document.getElementById('context-menu');
+
+        // 컨텍스트 메뉴 위에 마우스가 올라가면 모든 하이라이트를 숨김
+        contextMenu.addEventListener('mouseenter', () => {
+            // 돌출/면 하이라이트(녹색 등) 숨기기
+            if (highlightMesh) {
+                highlightMesh.visible = false;
+            }
+            // 텍스처링 하이라이트(노란색) 제거
+            clearTextureHighlight();
+        });
         
         // 삭제 버튼 클릭 이벤트
         const deleteButton = document.getElementById('delete-object');
@@ -792,6 +883,16 @@ function hideContextMenu() {
         contextMenu.style.display = 'none';
         contextMenuTarget = null;
     }
+    // 컨텍스트 메뉴가 닫힐 때 모든 객체의 하이라이트를 제거
+    drawableObjects.forEach(obj => {
+        if (obj.userData._origMaterialColors) {
+            obj.material.forEach((m, i) => {
+                m.color.copy(obj.userData._origMaterialColors[i]);
+                m.needsUpdate = true;
+            });
+            delete obj.userData._origMaterialColors;
+        }
+    });
 }
 
 function deleteObject(objectToDelete) {
@@ -845,10 +946,10 @@ function onPointerDown(event) {
     updateMouseAndRaycaster(event);
     const intersects = raycaster.intersectObjects(drawableObjects);
 
-    // 텍스처링 모드일 경우, 드로잉/돌출 로직을 완전히 건너뜀
-    if (isTexturingMode) {
-        return; 
-    }
+    // 텍스처링 모드일 때도 돌출/그리기 시작은 가능해야 하므로, 바로 return하지 않음
+    // if (isTexturingMode) {
+    //     return; 
+    // }
 
     if (!drawingMode) return;
 
@@ -1074,6 +1175,8 @@ function onPointerMove(event) {
         const newScaleY = newHeight / extrudeTarget.geometry.parameters.height;
         extrudeTarget.position.y = extrudeBaseY + newHeight / 2;
         extrudeTarget.scale.y = newScaleY;
+        updateTextureRepeatOnObject(extrudeTarget);
+        updateTotalPrice(); // 가격 업데이트
         
         // extrudeTarget의 새로운 상단 Y 좌표
         const newExtrudeTargetTopY = extrudeTarget.position.y + newHeight / 2;
@@ -1169,6 +1272,8 @@ function onPointerMove(event) {
         }
         extrudeTarget.scale.x = newWidth / extrudeTarget.geometry.parameters.width;
         extrudeTarget.position.x = newPosX;
+        updateTextureRepeatOnObject(extrudeTarget);
+        updateTotalPrice(); // 가격 업데이트
         // 정보 표시
         const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
         const depth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
@@ -1250,6 +1355,8 @@ function onPointerMove(event) {
         }
         extrudeTarget.scale.z = newDepth / extrudeTarget.geometry.parameters.depth;
         extrudeTarget.position.z = newPosZ;
+        updateTextureRepeatOnObject(extrudeTarget);
+        updateTotalPrice(); // 가격 업데이트
         // 정보 표시
         const width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
         const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
@@ -1300,7 +1407,13 @@ function onPointerMove(event) {
     } else if (drawingMode) { // 그리기 모드일 때만 하이라이트 처리 (그리기/돌출 중이 아닐 때)
         updateHighlight();
         if (isTexturingMode) {
-            updateTextureHighlight();
+            // 돌출 하이라이트(highlightMesh)가 활성화되어 있을 때는
+            // 텍스처 하이라이트(노란색)를 표시하지 않아 색상 충돌을 방지합니다.
+            if (highlightMesh && highlightMesh.visible) {
+                clearTextureHighlight();
+            } else {
+                updateTextureHighlight();
+            }
         }
     } else { // 다른 모드 (이동, 회전)일 때는 하이라이트 끄기
         if(highlightMesh) highlightMesh.visible = false;
@@ -1308,7 +1421,30 @@ function onPointerMove(event) {
     }
 }
 
-function onPointerUp(event) {
+async function onPointerUp(event) { // async 키워드 추가
+    // 텍스처링 모드이고, 드래그가 아닌 클릭일 경우 텍스처 적용
+    const dragDistance = mouseDownPos.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
+    if (isTexturingMode && selectedTextureSrc && dragDistance < 5) {
+        const intersects = raycaster.intersectObjects(drawableObjects);
+        if (intersects.length > 0) {
+            const intersection = intersects[0];
+            const intersectedObject = intersection.object;
+            const materialIndex = intersection.face.materialIndex;
+            const oldMaterial = intersectedObject.material[materialIndex].clone();
+
+            const command = await applyTextureToFace(intersectedObject, materialIndex, selectedTextureSrc, textureApplyMode, oldMaterial);
+            history.execute(command);
+            
+            // 텍스처 적용 후에는 다른 onPointerUp 로직(돌출, 그리기 등)을 실행하지 않도록 여기서 종료
+            isDrawing = false;
+            isExtruding = false;
+            isExtrudingX = false;
+            isExtrudingZ = false;
+            controls.enabled = true;
+            return;
+        }
+    }
+
     if (isExtruding) {
         const extrudeNewTransforms = extrudeStackedObjects.map(obj => ({
             geometry: obj.geometry.clone(),
@@ -1991,6 +2127,80 @@ function animate() {
 
 animate(); 
 
+function updateTotalPrice() {
+    let totalPrice = 0;
+    const texturePalette = document.getElementById('texture-palette');
+
+    drawableObjects.forEach(object => {
+        if (!object.material) return;
+
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        
+        materials.forEach((material, materialIndex) => {
+            if (material.map && material.userData && material.userData.textureApplyMode === 'original') {
+                const textureSrc = material.userData.textureSrc;
+                if (!textureSrc) return;
+
+                let relativeTextureSrc = textureSrc;
+                if (textureSrc.startsWith('http://') || textureSrc.startsWith('https://')) {
+                    try {
+                        const url = new URL(textureSrc);
+                        const texturesPathIndex = url.pathname.indexOf('/textures/');
+                        if (texturesPathIndex !== -1) {
+                            relativeTextureSrc = url.pathname.substring(texturesPathIndex + 1);
+                        } else {
+                            relativeTextureSrc = url.pathname.substring(url.pathname.lastIndexOf('/') + 1);
+                        }
+                    } catch (e) {
+                        relativeTextureSrc = textureSrc;
+                    }
+                }
+
+                const textureOption = texturePalette.querySelector(`.texture-option[data-texture="${relativeTextureSrc}"]`);
+                if (!textureOption) return;
+
+                const pricePerSqm = parseFloat(textureOption.dataset.price);
+                if (isNaN(pricePerSqm)) return;
+
+                let faceWidthM = 1;
+                let faceHeightM = 1;
+                const geometry = object.geometry;
+                const scale = object.scale;
+                let normal = new THREE.Vector3();
+
+                switch (materialIndex) {
+                    case 0: normal.set(1, 0, 0); break;
+                    case 1: normal.set(-1, 0, 0); break;
+                    case 2: normal.set(0, 1, 0); break;
+                    case 3: normal.set(0, -1, 0); break;
+                    case 4: normal.set(0, 0, 1); break;
+                    case 5: normal.set(0, 0, -1); break;
+                }
+                normal.applyQuaternion(object.quaternion).normalize();
+
+                if (Math.abs(normal.y) > 0.99) { // Top/Bottom face
+                    faceWidthM = geometry.parameters.width * scale.x;
+                    faceHeightM = geometry.parameters.depth * scale.z;
+                } else if (Math.abs(normal.x) > 0.99) { // Side face (X)
+                    faceWidthM = geometry.parameters.depth * scale.z;
+                    faceHeightM = geometry.parameters.height * scale.y;
+                } else if (Math.abs(normal.z) > 0.99) { // Side face (Z)
+                    faceWidthM = geometry.parameters.width * scale.x;
+                    faceHeightM = geometry.parameters.height * scale.y;
+                }
+
+                const area = faceWidthM * faceHeightM;
+                totalPrice += area * pricePerSqm;
+            }
+        });
+    });
+
+    const priceDisplay = document.getElementById('total-price-display');
+    if (priceDisplay) {
+        priceDisplay.textContent = `₩${Math.round(totalPrice).toLocaleString()}`;
+    }
+}
+
 // === 메뉴 드롭다운 Undo/Redo 활성화 상태 관리 ===
 function updateUndoRedoMenuState() {
     const undoItem = document.querySelector('.menu-item:nth-child(2) .dropdown-item:nth-child(1)');
@@ -2096,16 +2306,19 @@ const origExecute = history.execute.bind(history);
 history.execute = function(cmd) {
     origExecute(cmd);
     updateUndoRedoMenuState();
+    updateTotalPrice(); // 가격 업데이트 호출
 };
 const origUndo = history.undo.bind(history);
 history.undo = function() {
     origUndo();
     updateUndoRedoMenuState();
+    updateTotalPrice(); // 가격 업데이트 호출
 };
 const origRedo = history.redo.bind(history);
 history.redo = function() {
     origRedo();
     updateUndoRedoMenuState();
+    updateTotalPrice(); // 가격 업데이트 호출
 }; 
 
 // === 격자 보기 토글 및 체크박스 표시 ===
@@ -2798,6 +3011,19 @@ if (toggleLightMenu) {
     // 초기 상태 동기화
     setLightMenuState(true);
 }
+
+// === 페이지 이탈 방지 ===
+window.addEventListener('beforeunload', (event) => {
+    // 캔버스에 그려진 객체가 하나라도 있으면
+    if (drawableObjects.length > 0) {
+        // 표준에 따라, 기본 동작을 막고 메시지를 반환하여
+        // 브라우저가 사용자에게 확인 대화상자를 표시하도록 함
+        event.preventDefault();
+        // 대부분의 최신 브라우저는 이 커스텀 메시지를 표시하지 않지만,
+        // 호환성을 위해 설정하는 것이 좋음
+        event.returnValue = '작업한 내용이 저장되지 않을 수 있습니다. 정말로 나가시겠습니까?';
+    }
+});
 
 // === 객체 목록 패널 동적 렌더링 ===
 function renderObjectListPanel() {
