@@ -839,12 +839,18 @@ function findStackedObjectsRecursive(baseObj, resultArr) {
 }
 function onPointerDown(event) {
     if (event.button !== 0) return;
-    if (!drawingMode) return;
     
     clearTextureHighlight();
     mouseDownPos.set(event.clientX, event.clientY);
     updateMouseAndRaycaster(event);
     const intersects = raycaster.intersectObjects(drawableObjects);
+
+    // 텍스처링 모드일 경우, 드로잉/돌출 로직을 완전히 건너뜀
+    if (isTexturingMode) {
+        return; 
+    }
+
+    if (!drawingMode) return;
 
     // 1. 윗면(y축) extrude
     if (highlightMesh && highlightMesh.visible && intersects.length > 0 && intersects[0].face.normal.y > 0.99) {
