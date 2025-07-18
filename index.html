@@ -19,154 +19,155 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <nav id="menu-bar">
-        <div class="menu-item">파일
-            <div class="dropdown">
-                <div class="dropdown-item">저장</div>
-                <div class="dropdown-item">불러오기</div>
-            </div>
-        </div>
-        <div class="menu-item">편집
-            <div class="dropdown">
-                <div class="dropdown-item">실행 취소</div>
-                <div class="dropdown-item">다시 실행</div>
-            </div>
-        </div>
-        <div class="menu-item">보기
-            <div class="dropdown">
-                <div class="dropdown-item" id="toggle-grid"><span class="check" style="display:inline-block;width:18px;text-align:center;"></span>격자 보기</div>
-                <div class="dropdown-item" id="toggle-light"><span class="check" style="display:inline-block;width:18px;text-align:center;"></span>조명 보기</div>
-                <div class="dropdown-divider"></div>
-                <div class="dropdown-item">전체화면</div>
-            </div>
-        </div>
-        <!-- <div class="menu-item">그리기
-            <div class="dropdown">
-                <div class="dropdown-divider"></div>
-                <div class="dropdown-item">사각형</div>
-                <div class="dropdown-item">원</div>
-            </div>
-        </div> -->
-        <div class="menu-item">도움말
-            <div class="dropdown">
-                <div class="dropdown-item" id="help-guide-button">사용 안내</div>
-            </div>
-        </div>
-    </nav>
-    <div id="container">
-        <div id="c-wrapper">
-            <canvas id="c"></canvas>
-            <canvas id="axis-orbit" width="120" height="120"></canvas>
-            <div id="light-panel">
-                <div id="light-joystick-row">
-                    <canvas id="light-joystick" width="90" height="90"></canvas>
+    <div id="app-wrapper">
+        <nav id="menu-bar">
+            <div class="menu-item">파일
+                <div class="dropdown">
+                    <div class="dropdown-item">저장</div>
+                    <div class="dropdown-item">불러오기</div>
                 </div>
             </div>
-            <div id="object-list-panel"></div>
-        <div id="camera-direction-indicator">
-            <canvas id="camera-direction-canvas"></canvas>
-        </div>
-        <div id="minimap-container">
-            <canvas id="minimap-canvas"></canvas>
-        </div>
-        </div>
-        <!-- 객체 목록 패널을 c-wrapper 내부로 이동 -->
-        <div id="texture-palette">
-            <h3>텍스처 선택</h3>
-            <img src="textures/wood.jpg" alt="Wood Texture" data-texture="textures/wood.jpg" class="texture-option active" data-x="1000" data-y="1000" draggable="true" data-price="35000">
-            <img src="textures/brick.jpg" alt="Brick Texture" data-texture="textures/brick.jpg" class="texture-option" data-x="1000" data-y="1000" draggable="true" data-price="50000">
-            <img src="textures/stone.jpg" alt="Brick Texture" data-texture="textures/stone.jpg" class="texture-option" data-x="1000" data-y="1000" draggable="true" data-price="42000">
-            <div id="total-price-display" style="margin-top: auto; padding-top: 10px; border-top: 1px solid #ccc; text-align: center; font-weight: bold;">
-                ₩0
-            </div>
-        </div>
-        <div id="dimension-info" style="display:none; padding: 15px; background: #fffbe7; border-left: 1px solid #ccc; min-width: 180px; font-size: 16px;">
-            <b>크기 정보</b><br>
-            가로: -<br>
-            세로: -<br>
-            높이: -
-        </div>
-        <div id="context-menu" class="context-menu">
-            <div class="context-menu-item" id="delete-object">객체 삭제</div>
-            <div class="context-menu-item" id="copy-object">객체 복사</div>
-            <div class="context-menu-item" id="delete-texture" style="display: none;">텍스처 삭제</div>
-            <div class="context-menu-item" id="rotate-texture" style="display: none;">텍스처 회전</div>
-            <div class="context-menu-item has-submenu" id="texture-apply-mode-menu" style="display: none;">텍스처 적용 방식
-                <div class="sub-menu">
-                    <div class="context-menu-item" id="texture-mode-stretch">늘이기</div>
-                    <div class="context-menu-item" id="texture-mode-original">원본 길이</div>
+            <div class="menu-item">편집
+                <div class="dropdown">
+                    <div class="dropdown-item">실행 취소</div>
+                    <div class="dropdown-item">다시 실행</div>
                 </div>
             </div>
-        </div>
-    </div>
-    <!-- 캔버스 세로 툴바 -->
-    <div id="toolbar-vertical">
-        <button class="tool-btn" id="tool-select" title="선택"><span data-feather="mouse-pointer" class="icon"></span></button>
-        <button class="tool-btn" id="tool-refresh" title="회전"><span data-feather="rotate-cw" class="icon"></span></button>
-        <button class="tool-btn active" id="tool-scale" title="그리기"><span data-feather="pen-tool" class="icon"></span></button>
-    </div>
-    <!-- 햄버거 버튼: body 최상단에 그대로 -->
-    <div id="object-list-hamburger-wrapper">
-        <button id="object-list-toggle" title="객체 목록 열기"><span data-feather="menu"></span></button>
-    </div>
-
-    <!-- Help Guide Modal -->
-    <div id="help-guide-modal" class="modal">
-        <div class="modal-content">
-            <span class="close-button">&times;</span>
-            <h2>사용 안내 및 단축키</h2>
-            <div class="modal-body">
-                <div class="modal-left-column">
-                    <h3>기능 설명</h3>
-                    <ul>
-                        <li><span data-feather="pen-tool" class="icon-small"></span> <strong>그리기 모드 (Draw Mode):</strong> 바닥이나 다른 객체의 면에 새로운 3D 객체를 그립니다.</li>
-                        <li><span data-feather="mouse-pointer" class="icon-small"></span> <strong>선택 모드 (Select Mode):</strong> 기존 3D 객체를 선택하고 이동하거나 삭제할 수 있습니다.</li>
-                        <li><span data-feather="rotate-cw" class="icon-small"></span> <strong>회전 모드 (Rotate Mode):</strong> 선택된 3D 객체를 회전시킬 수 있습니다. <kbd>Shift</kbd> 키를 누른 채로 회전하면 15도 각도로 스냅됩니다.</li>
-                        <li><strong>텍스처링 모드 (Texturing Mode):</strong> 그리기 모드에서만 활성화되며, 객체의 면에 텍스처를 적용합니다.</li>
-                        <li><strong>돌출 (Extrude):</strong> 객체의 면을 드래그해서 돌출시키는 기능입니다.</li>
-                        <li><strong>스냅 (Snap):</strong> 그리기 및 이동 시 다른 객체의 꼭짓점이나 면에 스냅됩니다.</li>
-                        <li><strong>조명 조절 (Light Control):</strong> 우측 상단 조이스틱으로 조명의 위치를 조절합니다.</li>
-                        <li><strong>카메라 초기화 (Camera Reset):</strong> 우측 하단 뷰 축 위젯 클릭 시 카메라 뷰를 초기화합니다.</li>
-                    </ul>
-                    <h3>단축키</h3>
-                    <ul>
-                        <li><kbd>D</kbd>: 그리기 모드 전환</li>
-                        <li><kbd>S</kbd>: 선택 모드 전환</li>
-                        <li><kbd>R</kbd>: 회전 모드 전환</li>
-                        <li><kbd>M</kbd>: 객체 목록 토글</li>
-                        <li><kbd>L</kbd>: 조명 ON/OFF</li>
-                        <li><kbd>G</kbd>: 격자 ON/OFF</li>
-                        <li><kbd>Ctrl</kbd> + <kbd>Z</kbd>: 실행 취소 (Undo)</li>
-                        <li><kbd>Ctrl</kbd> + <kbd>Y</kbd>: 다시 실행 (Redo)</li>
-                        <li><kbd>Delete</kbd> / <kbd>Backspace</kbd>: 선택된 객체 삭제 (선택 모드에서만)</li>
-                        <li><kbd>ESC</kbd>: 현재 작업 취소 및 그리기 모드로 복귀 (모달 닫기 포함)</li>
-                    </ul>
+            <div class="menu-item">보기
+                <div class="dropdown">
+                    <div class="dropdown-item" id="toggle-grid"><span class="check" style="display:inline-block;width:18px;text-align:center;"></span>격자 보기</div>
+                    <div class="dropdown-item" id="toggle-light"><span class="check" style="display:inline-block;width:18px;text-align:center;"></span>조명 보기</div>
+                    <div class="dropdown-divider"></div>
+                    <div class="dropdown-item" id="toggle-fullscreen-menu">전체화면</div>
                 </div>
-                <div class="modal-right-column">
-                    <h3>마우스 조작</h3>
-                    <div class="mouse-guide-section">
-                        <div class="mouse-action-item">
-                            <div class="mouse-icon mouse-icon-left-click"></div>
-                            <p><strong>왼쪽 클릭:</strong> 도형 선택, 회전, 그리기</p>
-                        </div>
-                        <div class="mouse-action-item">
-                            <div class="mouse-icon mouse-icon-right-drag"></div>
-                            <p><strong>오른쪽 클릭 후 드래그:</strong> 카메라 회전</p>
-                        </div>
-                        <div class="mouse-action-item">
-                            <div class="mouse-icon mouse-icon-middle-drag"></div>
-                            <p><strong>휠 클릭 후 드래그:</strong> 뷰 이동 (Pan)</p>
-                        </div>
-                        <div class="mouse-action-item">
-                            <div class="mouse-icon mouse-icon-wheel-scroll"></div>
-                            <p><strong>휠 위/아래 스크롤:</strong> 줌인/줌아웃</p>
-                        </div>
+            </div>
+            <!-- <div class="menu-item">그리기
+                <div class="dropdown">
+                    <div class="dropdown-divider"></div>
+                    <div class="dropdown-item">사각형</div>
+                    <div class="dropdown-item">원</div>
+                </div>
+            </div> -->
+            <div class="menu-item">도움말
+                <div class="dropdown">
+                    <div class="dropdown-item" id="help-guide-button">사용 안내</div>
+                </div>
+            </div>
+        </nav>
+        <div id="container">
+            <div id="c-wrapper">
+                <canvas id="c"></canvas>
+                <canvas id="axis-orbit" width="120" height="120"></canvas>
+                <div id="light-panel">
+                    <div id="light-joystick-row">
+                        <canvas id="light-joystick" width="90" height="90"></canvas>
                     </div>
                 </div>
-                <p class="modal-note"><strong>참고:</strong> 마우스 드래그, 돌출 등 특정 작업이 진행 중일 때는 모드 전환 단축키가 작동하지 않습니다.</p>
+                <div id="object-list-panel"></div>
+            <div id="camera-direction-indicator">
+                <canvas id="camera-direction-canvas"></canvas>
+            </div>
+            <div id="minimap-container">
+                <canvas id="minimap-canvas"></canvas>
+            </div>
+            </div>
+            <!-- 객체 목록 패널을 c-wrapper 내부로 이동 -->
+            <div id="texture-palette">
+                <h3>텍스처 선택</h3>
+                <img src="textures/wood.jpg" alt="Wood Texture" data-texture="textures/wood.jpg" class="texture-option active" data-x="1000" data-y="1000" draggable="true" data-price="35000">
+                <img src="textures/brick.jpg" alt="Brick Texture" data-texture="textures/brick.jpg" class="texture-option" data-x="1000" data-y="1000" draggable="true" data-price="50000">
+                <img src="textures/stone.jpg" alt="Brick Texture" data-texture="textures/stone.jpg" class="texture-option" data-x="1000" data-y="1000" draggable="true" data-price="42000">
+                <div id="total-price-display" style="margin-top: auto; padding-top: 10px; border-top: 1px solid #ccc; text-align: center; font-weight: bold;">
+                    ₩0
+                </div>
+            </div>
+            <div id="dimension-info" style="display:none; padding: 15px; background: #fffbe7; border-left: 1px solid #ccc; min-width: 180px; font-size: 16px;">
+                <b>크기 정보</b><br>
+                가로: -<br>
+                세로: -<br>
+                높이: -
+            </div>
+            <div id="context-menu" class="context-menu">
+                <div class="context-menu-item" id="delete-object">객체 삭제</div>
+                <div class="context-menu-item" id="copy-object">객체 복사</div>
+                <div class="context-menu-item" id="delete-texture" style="display: none;">텍스처 삭제</div>
+                <div class="context-menu-item" id="rotate-texture" style="display: none;">텍스처 회전</div>
+                <div class="context-menu-item has-submenu" id="texture-apply-mode-menu" style="display: none;">텍스처 적용 방식
+                    <div class="sub-menu">
+                        <div class="context-menu-item" id="texture-mode-stretch">늘이기</div>
+                        <div class="context-menu-item" id="texture-mode-original">원본 길이</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- 캔버스 세로 툴바 -->
+        <div id="toolbar-vertical">
+            <button class="tool-btn" id="tool-select" title="선택"><span data-feather="mouse-pointer" class="icon"></span></button>
+            <button class="tool-btn" id="tool-refresh" title="회전"><span data-feather="rotate-cw" class="icon"></span></button>
+            <button class="tool-btn active" id="tool-scale" title="그리기"><span data-feather="pen-tool" class="icon"></span></button>
+        </div>
+        <!-- 햄버거 버튼: body 최상단에 그대로 -->
+        <div id="object-list-hamburger-wrapper">
+            <button id="object-list-toggle" title="객체 목록 열기"><span data-feather="menu"></span></button>
+        </div>
+
+        <!-- Help Guide Modal -->
+        <div id="help-guide-modal" class="modal">
+            <div class="modal-content">
+                <span class="close-button">&times;</span>
+                <h2>사용 안내 및 단축키</h2>
+                <div class="modal-body">
+                    <div class="modal-left-column">
+                        <h3>기능 설명</h3>
+                        <ul>
+                            <li><span data-feather="pen-tool" class="icon-small"></span> <strong>그리기 모드 (Draw Mode):</strong> 바닥이나 다른 객체의 면에 새로운 3D 객체를 그립니다.</li>
+                            <li><span data-feather="mouse-pointer" class="icon-small"></span> <strong>선택 모드 (Select Mode):</strong> 기존 3D 객체를 선택하고 이동하거나 삭제할 수 있습니다.</li>
+                            <li><span data-feather="rotate-cw" class="icon-small"></span> <strong>회전 모드 (Rotate Mode):</strong> 선택된 3D 객체를 회전시킬 수 있습니다. <kbd>Shift</kbd> 키를 누른 채로 회전하면 15도 각도로 스냅됩니다.</li>
+                            <li><strong>텍스처링 모드 (Texturing Mode):</strong> 그리기 모드에서만 활성화되며, 객체의 면에 텍스처를 적용합니다.</li>
+                            <li><strong>돌출 (Extrude):</strong> 객체의 면을 드래그해서 돌출시키는 기능입니다.</li>
+                            <li><strong>스냅 (Snap):</strong> 그리기 및 이동 시 다른 객체의 꼭짓점이나 면에 스냅됩니다.</li>
+                            <li><strong>조명 조절 (Light Control):</strong> 우측 상단 조이스틱으로 조명의 위치를 조절합니다.</li>
+                            <li><strong>카메라 초기화 (Camera Reset):</strong> 우측 하단 뷰 축 위젯 클릭 시 카메라 뷰를 초기화합니다.</li>
+                        </ul>
+                        <h3>단축키</h3>
+                        <ul>
+                            <li><kbd>D</kbd>: 그리기 모드 전환</li>
+                            <li><kbd>S</kbd>: 선택 모드 전환</li>
+                            <li><kbd>R</kbd>: 회전 모드 전환</li>
+                            <li><kbd>M</kbd>: 객체 목록 토글</li>
+                            <li><kbd>L</kbd>: 조명 ON/OFF</li>
+                            <li><kbd>G</kbd>: 격자 ON/OFF</li>
+                            <li><kbd>Ctrl</kbd> + <kbd>Z</kbd>: 실행 취소 (Undo)</li>
+                            <li><kbd>Ctrl</kbd> + <kbd>Y</kbd>: 다시 실행 (Redo)</li>
+                            <li><kbd>Delete</kbd> / <kbd>Backspace</kbd>: 선택된 객체 삭제 (선택 모드에서만)</li>
+                            <li><kbd>ESC</kbd>: 현재 작업 취소 및 그리기 모드로 복귀 (모달 닫기 포함)</li>
+                        </ul>
+                    </div>
+                    <div class="modal-right-column">
+                        <h3>마우스 조작</h3>
+                        <div class="mouse-guide-section">
+                            <div class="mouse-action-item">
+                                <div class="mouse-icon mouse-icon-left-click"></div>
+                                <p><strong>왼쪽 클릭:</strong> 도형 선택, 회전, 그리기</p>
+                            </div>
+                            <div class="mouse-action-item">
+                                <div class="mouse-icon mouse-icon-right-drag"></div>
+                                <p><strong>오른쪽 클릭 후 드래그:</strong> 카메라 회전</p>
+                            </div>
+                            <div class="mouse-action-item">
+                                <div class="mouse-icon mouse-icon-middle-drag"></div>
+                                <p><strong>휠 클릭 후 드래그:</strong> 뷰 이동 (Pan)</p>
+                            </div>
+                            <div class="mouse-action-item">
+                                <div class="mouse-icon mouse-icon-wheel-scroll"></div>
+                                <p><strong>휠 위/아래 스크롤:</strong> 줌인/줌아웃</p>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="modal-note"><strong>참고:</strong> 마우스 드래그, 돌출 등 특정 작업이 진행 중일 때는 모드 전환 단축키가 작동하지 않습니다.</p>
+                </div>
             </div>
         </div>
     </div>
-
 </body>
 </html>

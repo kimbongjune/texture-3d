@@ -352,6 +352,10 @@ window.addEventListener('keydown', (event) => {
             case 'g': // 격자 토글
                 toggleGridVisibility();
                 break;
+            case 'f11': // 전체화면 토글
+                event.preventDefault(); // 브라우저 기본 전체화면 동작 방지
+                toggleFullscreen();
+                break;
         }
     }
 
@@ -376,6 +380,39 @@ window.addEventListener('keydown', (event) => {
 window.addEventListener('keyup', (event) => {
     if (event.key === 'Shift') {
         isShiftDown = false;
+    }
+});
+
+// 전체화면 토글 함수
+function toggleFullscreen() {
+    const fullscreenElement = document.getElementById('app-wrapper');
+    if (fullscreenElement) {
+        if (!document.fullscreenElement) {
+            fullscreenElement.requestFullscreen().catch(err => {
+                console.error(`Error attempting to enable fullscreen: ${err.message} (${err.name})`);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    }
+}
+
+// 네비게이션 메뉴의 '전체화면' 항목 클릭 이벤트
+const toggleFullscreenMenu = document.getElementById('toggle-fullscreen-menu');
+if (toggleFullscreenMenu) {
+    toggleFullscreenMenu.addEventListener('click', () => {
+        toggleFullscreen();
+    });
+}
+
+// 전체화면 상태 변경 감지 및 메뉴 텍스트 업데이트
+document.addEventListener('fullscreenchange', () => {
+    if (toggleFullscreenMenu) {
+        if (document.fullscreenElement) {
+            toggleFullscreenMenu.textContent = '전체화면 종료';
+        } else {
+            toggleFullscreenMenu.textContent = '전체화면';
+        }
     }
 });
 
