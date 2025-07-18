@@ -2869,11 +2869,11 @@ function drawJoystick() {
     // 조작점
     ctx.beginPath();
     ctx.arc(knobX, knobY, joystickKnobRadius, 0, Math.PI * 2);
-    ctx.fillStyle = '#0078ff';
+    ctx.fillStyle = '#FFC107'; // 따뜻한 노란색
     // === 수정: lightToggle이 없으면 directionalLight.visible로 판단 ===
     const isLightOn = (typeof lightToggle !== 'undefined' && lightToggle) ? lightToggle.checked : directionalLight.visible;
     ctx.globalAlpha = isLightOn ? 1 : 0.5;
-    ctx.shadowColor = '#0078ff';
+    ctx.shadowColor = '#FFC107'; // 그림자 색상도 변경
     ctx.shadowBlur = 6;
     ctx.fill();
     ctx.globalAlpha = 1;
@@ -2881,6 +2881,44 @@ function drawJoystick() {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2.2;
     ctx.stroke();
+
+    // 손전등 느낌의 원뿔형 빛 (노브에서 중앙으로 향함)
+    let beamDirX = joystickCenter.x - knobX; // 노브에서 중앙으로 향하는 벡터
+    let beamDirY = joystickCenter.y - knobY;
+    let beamDirLength = Math.sqrt(beamDirX * beamDirX + beamDirY * beamDirY);
+
+    if (beamDirLength > 0) {
+        beamDirX /= beamDirLength; // 정규화
+        beamDirY /= beamDirLength;
+
+        const perpBeamDirX = -beamDirY; // 수직 벡터
+        const perpBeamDirY = beamDirX;
+
+        const beamStartWidth = joystickKnobRadius * 0.6; // 노브에서의 빛 시작 너비
+        const beamEndLength = joystickKnobRadius * 2.5; // 빛이 뻗어나가는 길이 (원래대로)
+        const beamEndWidth = joystickKnobRadius * 1.5; // 빛의 끝 너비
+
+        // 빛의 시작점 (노브 가장자리에서 더 바깥쪽으로)
+        const p1x = knobX + perpBeamDirX * beamStartWidth + beamDirX * (joystickKnobRadius * 0.5);
+        const p1y = knobY + perpBeamDirY * beamStartWidth + beamDirY * (joystickKnobRadius * 0.5);
+        const p2x = knobX - perpBeamDirX * beamStartWidth + beamDirX * (joystickKnobRadius * 0.5);
+        const p2y = knobY - perpBeamDirY * beamStartWidth + beamDirY * (joystickKnobRadius * 0.5);
+
+        // 빛의 끝점 (중앙 방향으로 뻗어나감)
+        const p3x = knobX + beamDirX * beamEndLength + perpBeamDirX * beamEndWidth;
+        const p3y = knobY + beamDirY * beamEndLength + perpBeamDirY * beamEndWidth;
+        const p4x = knobX + beamDirX * beamEndLength - perpBeamDirX * beamEndWidth;
+        const p4y = knobY + beamDirY * beamEndLength - perpBeamDirY * beamEndWidth;
+
+        ctx.beginPath();
+        ctx.moveTo(p1x, p1y);
+        ctx.lineTo(p3x, p3y);
+        ctx.lineTo(p4x, p4y);
+        ctx.lineTo(p2x, p2y);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255, 255, 150, 0.5)'; // 더 밝은 노란색, 투명도 유지
+        ctx.fill();
+    }
 }
 if (lightJoystick) {
     drawJoystick();
