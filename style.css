@@ -13,7 +13,7 @@ body {
     align-items: center;
     justify-content: flex-start;
     box-shadow: none;
-    position: fixed;
+    position: absolute;
     top: 0;
     left: 0;
     z-index: 10000;
@@ -64,7 +64,7 @@ body {
     display: flex;
     gap: 32px;
     align-items: center;
-    position: fixed;
+    position: absolute;
     top: 0;
     left: 0;
     z-index: 10000;
@@ -286,7 +286,7 @@ body {
 
 #toolbar-vertical {
     border-radius: 10px;
-    position: fixed;
+    position: absolute;
     top: 56px;
     left: 14px;
     display: flex;
@@ -453,7 +453,7 @@ body {
 
 /* 객체 목록 패널 */
 #object-list-hamburger-wrapper {
-    position: fixed;
+    position: absolute;
     top: 200px;
     left: 14px;
     z-index: 13001;
@@ -493,8 +493,8 @@ body {
     transition: none;
 }
 #object-list-panel {
-    position: fixed;
-    top: 56px;
+    position: absolute;
+    top: 20px;
     left: 70px;
     width: 240px;
     bottom: 20px;
@@ -548,7 +548,7 @@ body {
 /* Modal Styles */
 .modal {
     display: none; /* Hidden by default */
-    position: fixed; /* Stay in place */
+    position: absolute; /* Stay in place */
     z-index: 20000; /* Sit on top */
     left: 0;
     top: 0;
@@ -686,7 +686,7 @@ body {
 
 /* Camera Direction Indicator Styles */
 #camera-direction-indicator {
-    position: fixed;
+    position: absolute;
     bottom: 20px;
     left: 20px;
     z-index: 10000; /* Ensure it's above other elements */
