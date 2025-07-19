@@ -160,7 +160,7 @@ body {
     width: 100%;
 }
 
-#container {
+#d3-container {
     position: relative;
     margin-top: 44px;
     padding-top: 0;
@@ -530,10 +530,6 @@ body {
     transform: scale(0.7) rotate(60deg);
     transition: opacity 0.13s, transform 0.18s cubic-bezier(.4,1.4,.6,1);
 }
-#object-list-toggle {
-    /* 기존 .tool-btn 스타일 상속, 별도 스타일 필요시 여기에 */
-} 
-
 .object-list-item:hover {
     background: #f5faff;
     transition: background 0.15s;
