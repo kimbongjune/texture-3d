@@ -420,10 +420,11 @@ if (toggleFullscreenMenu) {
 document.addEventListener('fullscreenchange', () => {
     if (toggleFullscreenMenu) {
         if (document.fullscreenElement) {
-            toggleFullscreenMenu.textContent = '전체화면 종료';
+            toggleFullscreenMenu.innerHTML = '<span data-feather="minimize-2" class="icon-small"></span>전체화면 종료';
         } else {
-            toggleFullscreenMenu.textContent = '전체화면';
+            toggleFullscreenMenu.innerHTML = '<span data-feather="maximize-2" class="icon-small"></span>전체화면';
         }
+        feather.replace() 
     }
 });
 

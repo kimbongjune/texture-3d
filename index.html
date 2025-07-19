@@ -23,8 +23,8 @@
         <nav id="menu-bar">
             <div class="menu-item">파일
                 <div class="dropdown">
-                    <div class="dropdown-item" id="save-scene">저장</div>
-                    <div class="dropdown-item" id="load-scene">열기</div>
+                    <div class="dropdown-item" id="save-scene"><span data-feather="save" class="icon-small"></span>저장</div>
+                    <div class="dropdown-item" id="load-scene"><span data-feather="folder" class="icon-small"></span>열기</div>
                     <div class="dropdown-item has-submenu disabled">내보내기
                         <div class="sub-menu">
                             <div class="dropdown-item" id="export-gltf">GLTF (.gltf)</div>
@@ -43,16 +43,22 @@
             </div>
             <div class="menu-item">편집
                 <div class="dropdown">
-                    <div class="dropdown-item">실행 취소</div>
-                    <div class="dropdown-item">다시 실행</div>
+                    <div class="dropdown-item"><span data-feather="rotate-ccw" class="icon-small"></span>실행 취소</div>
+                    <div class="dropdown-item"><span data-feather="rotate-cw" class="icon-small"></span>다시 실행</div>
                 </div>
             </div>
             <div class="menu-item">보기
                 <div class="dropdown">
-                    <div class="dropdown-item" id="toggle-grid"><span class="check" style="display:inline-block;width:18px;text-align:center;"></span>격자 보기</div>
-                    <div class="dropdown-item" id="toggle-light"><span class="check" style="display:inline-block;width:18px;text-align:center;"></span>조명 보기</div>
+                    <div class="dropdown-item" id="toggle-grid">
+                        <span class="check" style="display:inline-block;width:18px;text-align:center;"></span>
+                        <span data-feather="grid" class="icon-small"></span>
+                        격자 보기</div>
+                    <div class="dropdown-item" id="toggle-light">
+                        <span class="check" style="display:inline-block;width:18px;text-align:center;"></span>
+                        <span data-feather="sun" class="icon-small"></span>
+                        조명 보기</div>
                     <div class="dropdown-divider"></div>
-                    <div class="dropdown-item" id="toggle-fullscreen-menu">전체화면</div>
+                    <div class="dropdown-item" id="toggle-fullscreen-menu"><span data-feather="maximize-2" class="icon-small"></span>전체화면</div>
                 </div>
             </div>
             <!-- <div class="menu-item">그리기
@@ -64,7 +70,7 @@
             </div> -->
             <div class="menu-item">도움말
                 <div class="dropdown">
-                    <div class="dropdown-item" id="help-guide-button">사용 안내</div>
+                    <div class="dropdown-item" id="help-guide-button"><span data-feather="help-circle" class="icon-small"></span>사용 안내</div>
                 </div>
             </div>
         </nav>
@@ -151,6 +157,7 @@
                             <li><kbd>M</kbd>: 객체 목록 토글</li>
                             <li><kbd>L</kbd>: 조명 ON/OFF</li>
                             <li><kbd>G</kbd>: 격자 ON/OFF</li>
+                            <li><kbd>F11</kbd>: 전체화면 토글</li>
                             <li><kbd>Ctrl</kbd> + <kbd>Z</kbd>: 실행 취소 (Undo)</li>
                             <li><kbd>Ctrl</kbd> + <kbd>Y</kbd>: 다시 실행 (Redo)</li>
                             <li><kbd>Delete</kbd> / <kbd>Backspace</kbd>: 선택된 객체 삭제 (선택 모드에서만)</li>
@@ -184,4 +191,6 @@
         </div>
     </div>
 </body>
+<script>
+</script>
 </html>
