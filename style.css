@@ -116,6 +116,27 @@ body {
     background: #eaf4ff;
     color: #0078ff;
 }
+
+.dropdown-item.has-submenu {
+    position: relative;
+}
+
+.dropdown-item.has-submenu > .sub-menu {
+    display: none;
+    position: absolute;
+    left: 100%;
+    top: -1px; /* Adjust to align with parent item */
+    background: #fff;
+    border: 1px solid #ececec;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+    min-width: 140px;
+    z-index: 10002;
+}
+
+.dropdown-item.has-submenu:hover > .sub-menu {
+    display: block;
+}
 .dropdown-item.disabled {
     color: #bbb !important;
     background: #f4f6fa !important;

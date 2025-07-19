@@ -23,8 +23,22 @@
         <nav id="menu-bar">
             <div class="menu-item">파일
                 <div class="dropdown">
-                    <div class="dropdown-item disabled">저장</div>
-                    <div class="dropdown-item disabled">불러오기</div>
+                    <div class="dropdown-item" id="save-scene">저장</div>
+                    <div class="dropdown-item" id="load-scene">열기</div>
+                    <div class="dropdown-item has-submenu disabled">내보내기
+                        <div class="sub-menu">
+                            <div class="dropdown-item" id="export-gltf">GLTF (.gltf)</div>
+                            <div class="dropdown-item" id="export-obj">OBJ (.obj)</div>
+                            <div class="dropdown-item" id="export-stl">STL (.stl)</div>
+                        </div>
+                    </div>
+                    <div class="dropdown-item has-submenu disabled">불러오기
+                        <div class="sub-menu">
+                            <div class="dropdown-item" id="import-gltf">GLTF (.gltf/glb)</div>
+                            <div class="dropdown-item" id="import-obj">OBJ (.obj)</div>
+                            <div class="dropdown-item" id="import-stl">STL (.stl)</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="menu-item">편집

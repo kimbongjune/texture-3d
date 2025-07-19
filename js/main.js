@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
+import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
 let drawingMode = true;
 let moveMode = false;
@@ -2083,6 +2089,213 @@ function animate() {
     //     stickStackedObjects(obj);
     // }
 }
+
+function saveScene() {
+    const sceneJson = JSON.stringify(scene.toJSON());
+    const blob = new Blob([sceneJson], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'scene.json';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function loadScene(json) {
+    const loader = new THREE.ObjectLoader();
+    
+    // Clear existing objects
+    while(drawableObjects.length > 0){
+        const obj = drawableObjects.pop();
+        scene.remove(obj);
+    }
+    
+    const loadedScene = loader.parse(json);
+    
+    loadedScene.children.forEach(child => {
+        if (child.isMesh && child.geometry.type === 'BoxGeometry') {
+            // Make sure loaded objects are interactive
+            child.castShadow = true;
+            child.receiveShadow = true;
+            scene.add(child);
+            drawableObjects.push(child);
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const saveBtn = document.getElementById('save-scene');
+    const loadBtn = document.getElementById('load-scene');
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'application/json';
+
+    saveBtn.addEventListener('click', saveScene);
+
+    loadBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    fileInput.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const json = JSON.parse(e.target.result);
+                    loadScene(json);
+                } catch (error) {
+                    console.error('Error parsing JSON file:', error);
+                }
+            };
+            reader.readAsText(file);
+        }
+    });
+
+    // --- Exporter Functions ---
+    const exportGLTF = () => {
+        const exporter = new GLTFExporter();
+        exporter.parse(drawableObjects, function (result) {
+            const output = JSON.stringify(result, null, 2);
+            const blob = new Blob([output], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'scene.gltf';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+    };
+
+    const exportOBJ = () => {
+        const exporter = new OBJExporter();
+        const result = exporter.parse(scene);
+        const blob = new Blob([result], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'scene.obj';
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const exportSTL = () => {
+        const exporter = new STLExporter();
+        const result = exporter.parse(scene, { binary: true });
+        const blob = new Blob([result], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'scene.stl';
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    // --- Importer Functions ---
+    function normalizeAndCenterModel(model) {
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        if (size.length() < 0.001) return; // Avoid scaling tiny models
+
+        const maxSize = Math.max(size.x, size.y, size.z);
+        const scaleFactor = 5.0 / maxSize;
+        model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+        const scaledBox = new THREE.Box3().setFromObject(model);
+        const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+        model.position.sub(scaledCenter);
+
+        const groundBox = new THREE.Box3().setFromObject(model);
+        model.position.y -= groundBox.min.y;
+    }
+
+    const loadModel = (file) => {
+        const filename = file.name.toLowerCase();
+        const extension = filename.split('.').pop();
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            const contents = e.target.result;
+            let loader;
+
+            const onModelLoaded = (loadedModel) => {
+                normalizeAndCenterModel(loadedModel);
+
+                const meshes = [];
+                loadedModel.traverse(function (child) {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        meshes.push(child);
+                    }
+                });
+                
+                scene.add(loadedModel);
+                drawableObjects.push(...meshes);
+            };
+
+            switch (extension) {
+                case 'gltf':
+                case 'glb':
+                    loader = new GLTFLoader();
+                    loader.parse(contents, '', onModelLoaded, (error) => console.error('GLTF loading error:', error));
+                    break;
+
+                case 'obj':
+                    loader = new OBJLoader();
+                    onModelLoaded(loader.parse(contents));
+                    break;
+
+                case 'stl':
+                    loader = new STLLoader();
+                    const geometry = loader.parse(contents);
+                    const material = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+                    const model = new THREE.Mesh(geometry, material);
+                    onModelLoaded(model);
+                    break;
+
+                default:
+                    console.error('Unsupported file type:', extension);
+                    return;
+            }
+        };
+
+        if (extension === 'stl' || extension === 'glb') {
+            reader.readAsArrayBuffer(file);
+        } else {
+            reader.readAsText(file);
+        }
+    };
+
+    const importFileInput = document.createElement('input');
+    importFileInput.type = 'file';
+    importFileInput.onchange = (e) => {
+        if (e.target.files.length > 0) {
+            loadModel(e.target.files[0]);
+        }
+    };
+
+    document.getElementById('export-gltf').addEventListener('click', exportGLTF);
+    document.getElementById('export-obj').addEventListener('click', exportOBJ);
+    document.getElementById('export-stl').addEventListener('click', exportSTL);
+
+    document.getElementById('import-gltf').addEventListener('click', () => {
+        importFileInput.accept = '.gltf,.glb';
+        importFileInput.click();
+    });
+
+    document.getElementById('import-obj').addEventListener('click', () => {
+        importFileInput.accept = '.obj';
+        importFileInput.click();
+    });
+
+    document.getElementById('import-stl').addEventListener('click', () => {
+        importFileInput.accept = '.stl';
+        importFileInput.click();
+    });
+});
 
 animate(); 
 
