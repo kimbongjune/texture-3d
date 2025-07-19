@@ -160,25 +160,13 @@ let lastMouseY = 0;
 let axisGuideLines = []; // X/Z축 가이드 라인들 (높이 가이드는 제거됨)
 
 let isExtrudingX = false; // x축 extrude 상태
-let lastMouseX = 0;      // x축 드래그 시작 마우스 위치
-let extrudeXFaceSign = 1; // x축 extrude 시 클릭한 면 방향 (+1: 오른쪽, -1: 왼쪽)
-let extrudeXFaceNormal = new THREE.Vector3(1, 0, 0); // extrude 시작 시 클릭한 면 normal(월드좌표)
-let extrudeXFixedX = 0; // x축 extrude 시 고정되는 반대쪽 면의 x좌표
-let extrudeXStartX = 0; // 클릭한 면의 드래그 시작 x좌표
-let extrudeXTotalDelta = 0; // 누적 마우스 이동량
-let extrudeXStartScreenX = 0; // 클릭한 면의 드래그 시작 화면 x좌표
-let extrudeXNormalScreenX = 1; // 클릭한 면 normal의 화면 투영 x성분
-let extrudeXScreenAxis = 'x'; // extrude 방향(스크린 x/y)
-let extrudeXStartScreen = 0; // extrude 시작 시 마우스 스크린 좌표(x 또는 y)
+let isExtrudingZ = false; // z축 extrude 상태
 
-let isExtrudingZ = false;
-let lastMouseZ = 0;
-let extrudeZFaceSign = 1;
-let extrudeZFaceNormal = new THREE.Vector3(0, 0, 1);
-let extrudeZFixedZ = 0;
-let extrudeZStartZ = 0;
-let extrudeZScreenAxis = 'y';
-let extrudeZStartScreen = 0;
+// --- Extrusion state for X and Z axes ---
+let dragPlane = null; // Plane for calculating mouse movement in world space
+let extrudeFixedPoint = null; // The world position of the face opposite to the one being dragged
+let extrudeXFaceNormal = new THREE.Vector3(1, 0, 0); // World-space normal of the face being extruded
+let extrudeZFaceNormal = new THREE.Vector3(0, 0, 1); // World-space normal of the face being extruded
 
 // 텍스처링 상태 관련 변수
 let isTexturingMode = false;
@@ -1035,44 +1023,26 @@ function onPointerDown(event) {
         isExtrudingX = true;
         controls.enabled = false;
         extrudeTarget = intersects[0].object;
-        lastMouseX = event.clientX;
-        extrudeXFaceSign = intersects[0].face.normal.x > 0 ? 1 : -1; // 클릭한 면 방향 저장
-        extrudeXFaceNormal = intersects[0].face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(extrudeTarget.matrixWorld)).normalize(); // 월드좌표 normal 저장
-        // 드래그 시작 시 반대쪽 면의 x좌표 저장
+
+        // Get the world-space normal of the clicked face
+        const faceNormal = intersects[0].face.normal.clone();
+        extrudeXFaceNormal.copy(faceNormal.applyMatrix3(new THREE.Matrix3().getNormalMatrix(extrudeTarget.matrixWorld)).normalize());
+
+        // Calculate the position of the fixed face's center (opposite to the dragged one)
         const width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
-        if (extrudeXFaceSign > 0) {
-            // 오른쪽면 클릭: 왼쪽면 고정
-            extrudeXFixedX = extrudeTarget.position.x - width / 2;
-            extrudeXStartX = extrudeTarget.position.x + width / 2; // 오른쪽면 x좌표
-        } else {
-            // 왼쪽면 클릭: 오른쪽면 고정
-            extrudeXFixedX = extrudeTarget.position.x + width / 2;
-            extrudeXStartX = extrudeTarget.position.x - width / 2; // 왼쪽면 x좌표
-        }
-        extrudeXTotalDelta = 0;
-        // 클릭한 면의 3D 위치를 화면 좌표로 변환
-        const worldPos = new THREE.Vector3(extrudeXStartX, extrudeTarget.position.y, extrudeTarget.position.z);
-        const screenPos = worldPos.clone().project(camera);
-        extrudeXStartScreenX = screenPos.x;
-        // 클릭한 면 normal을 화면 좌표계로 투영
-        const normalEnd = worldPos.clone().add(extrudeXFaceNormal);
-        const normalScreen = normalEnd.project(camera).sub(screenPos).normalize();
-        extrudeXNormalScreenX = normalScreen.x;
-        // --- 개선: extrude 방향 자동 선택 ---
-        if (Math.abs(normalScreen.x) >= Math.abs(normalScreen.y)) {
-            extrudeXScreenAxis = 'x';
-            extrudeXStartScreen = ((event.clientX - renderer.domElement.getBoundingClientRect().left) / renderer.domElement.width) * 2 - 1;
-        } else {
-            extrudeXScreenAxis = 'y';
-            extrudeXStartScreen = -((event.clientY - renderer.domElement.getBoundingClientRect().top) / renderer.domElement.height) * 2 + 1;
-        }
-        // extrude 시작 전 상태 저장
+        const centerToFace = extrudeXFaceNormal.clone().multiplyScalar(width / 2);
+        extrudeFixedPoint = extrudeTarget.position.clone().sub(centerToFace);
+
+        // Create a plane that is aligned with the camera's view and passes through the intersection point
+        const planeNormal = camera.position.clone().sub(intersects[0].point).normalize();
+        dragPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, intersects[0].point);
+
+        // Save the initial state for undo/redo
         oldTransformData = {
             geometry: extrudeTarget.geometry.clone(),
             position: extrudeTarget.position.clone(),
             scale: extrudeTarget.scale.clone()
         };
-        // === 그룹 undo/redo용: 아래 도형 + 위에 쌓인 도형들 모두 old transform 저장 ===
         extrudeStackedObjects = [extrudeTarget];
         findStackedObjectsRecursive(extrudeTarget, extrudeStackedObjects);
         extrudeOldTransforms = extrudeStackedObjects.map(obj => ({
@@ -1088,40 +1058,26 @@ function onPointerDown(event) {
         isExtrudingZ = true;
         controls.enabled = false;
         extrudeTarget = intersects[0].object;
-        lastMouseZ = event.clientY;
-        extrudeZFaceSign = intersects[0].face.normal.z > 0 ? 1 : -1;
-        extrudeZFaceNormal = intersects[0].face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(extrudeTarget.matrixWorld)).normalize();
-        // 드래그 시작 시 반대쪽 면의 z좌표 저장
+
+        // Get the world-space normal of the clicked face
+        const faceNormal = intersects[0].face.normal.clone();
+        extrudeZFaceNormal.copy(faceNormal.applyMatrix3(new THREE.Matrix3().getNormalMatrix(extrudeTarget.matrixWorld)).normalize());
+
+        // Calculate the position of the fixed face's center (opposite to the dragged one)
         const depth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
-        if (extrudeZFaceSign > 0) {
-            // 앞면 클릭: 뒷면 고정
-            extrudeZFixedZ = extrudeTarget.position.z - depth / 2;
-            extrudeZStartZ = extrudeTarget.position.z + depth / 2; // 앞면 z좌표
-        } else {
-            // 뒷면 클릭: 앞면 고정
-            extrudeZFixedZ = extrudeTarget.position.z + depth / 2;
-            extrudeZStartZ = extrudeTarget.position.z - depth / 2; // 뒷면 z좌표
-        }
-        // 클릭한 면의 3D 위치를 화면 좌표로 변환
-        const worldPos = new THREE.Vector3(extrudeTarget.position.x, extrudeTarget.position.y, extrudeZStartZ);
-        const screenPos = worldPos.clone().project(camera);
-        // 클릭한 면 normal을 화면 좌표계로 투영
-        const normalEnd = worldPos.clone().add(extrudeZFaceNormal);
-        const normalScreen = normalEnd.project(camera).sub(screenPos).normalize();
-        // --- 개선: extrude 방향 자동 선택 ---
-        if (Math.abs(normalScreen.y) >= Math.abs(normalScreen.x)) {
-            extrudeZScreenAxis = 'y';
-            extrudeZStartScreen = -((event.clientY - renderer.domElement.getBoundingClientRect().top) / renderer.domElement.height) * 2 + 1;
-        } else {
-            extrudeZScreenAxis = 'x';
-            extrudeZStartScreen = ((event.clientX - renderer.domElement.getBoundingClientRect().left) / renderer.domElement.width) * 2 - 1;
-        }
+        const centerToFace = extrudeZFaceNormal.clone().multiplyScalar(depth / 2);
+        extrudeFixedPoint = extrudeTarget.position.clone().sub(centerToFace);
+
+        // Create a plane that is aligned with the camera's view and passes through the intersection point
+        const planeNormal = camera.position.clone().sub(intersects[0].point).normalize();
+        dragPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, intersects[0].point);
+
+        // Save the initial state for undo/redo
         oldTransformData = {
             geometry: extrudeTarget.geometry.clone(),
             position: extrudeTarget.position.clone(),
             scale: extrudeTarget.scale.clone()
         };
-        // === 그룹 undo/redo용: 아래 도형 + 위에 쌓인 도형들 모두 old transform 저장 ===
         extrudeStackedObjects = [extrudeTarget];
         findStackedObjectsRecursive(extrudeTarget, extrudeStackedObjects);
         extrudeOldTransforms = extrudeStackedObjects.map(obj => ({
@@ -1254,170 +1210,52 @@ function onPointerMove(event) {
         }
         // === 크기 정보 표시 끝 ===
     } else if (isExtrudingX) {
-        // extrudeX(옆면) - 스냅 가이드(보라색 구) 표시 추가
-        const rect = renderer.domElement.getBoundingClientRect();
-        let mouseScreen, deltaScreen;
-        if (extrudeXScreenAxis === 'x') {
-            mouseScreen = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            deltaScreen = mouseScreen - extrudeXStartScreen;
-        } else {
-            mouseScreen = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-            deltaScreen = mouseScreen - extrudeXStartScreen;
-        }
-        let direction = 1;
-        const worldPos = new THREE.Vector3(extrudeXStartX, extrudeTarget.position.y, extrudeTarget.position.z);
-        const normalEnd = worldPos.clone().add(extrudeXFaceNormal);
-        const normalScreen = normalEnd.project(camera).sub(worldPos.clone().project(camera)).normalize();
-        const normalScreenVal = extrudeXScreenAxis === 'x' ? normalScreen.x : normalScreen.y;
-        if (normalScreenVal * deltaScreen < 0) direction = -1;
-        const cameraDistance = camera.position.distanceTo(extrudeTarget.position);
-        const scaleFactor = cameraDistance * 2 * Math.tan(camera.fov * Math.PI / 360);
-        const moveAmount = Math.abs(deltaScreen) * scaleFactor * 0.5 * direction;
-        let dragX = extrudeXStartX + moveAmount * extrudeXFaceSign;
-        let newWidth = 0;
-        let newPosX = 0;
-        if (extrudeXFaceSign > 0) {
-            newWidth = Math.max(0.1, dragX - extrudeXFixedX);
-            newPosX = (dragX + extrudeXFixedX) / 2;
-        } else {
-            newWidth = Math.max(0.1, extrudeXFixedX - dragX);
-            newPosX = (dragX + extrudeXFixedX) / 2;
-        }
-        // 최소한의 면-면 스냅
-        let snapMin = 0.1;
-        let width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
-        let faceX = extrudeXFaceSign > 0 ? (newPosX + newWidth / 2) : (newPosX - newWidth / 2);
-        let snapTargetX = null;
-        let minDist = snapMin;
-        drawableObjects.forEach(obj => {
-            if (obj === extrudeTarget) return;
-            const objWidth = obj.geometry.parameters.width * obj.scale.x;
-            const leftX = obj.position.x - objWidth / 2;
-            const rightX = obj.position.x + objWidth / 2;
-            if (Math.abs(faceX - leftX) < minDist) {
-                minDist = Math.abs(faceX - leftX);
-                snapTargetX = leftX;
+        const intersectionPoint = new THREE.Vector3();
+        if (raycaster.ray.intersectPlane(dragPlane, intersectionPoint)) {
+            // Calculate the new width based on the distance from the fixed point
+            const newWidth = Math.max(0.1, intersectionPoint.clone().sub(extrudeFixedPoint).dot(extrudeXFaceNormal));
+
+            // Recalculate position and scale based on the fixed point
+            const newPosition = extrudeFixedPoint.clone().add(extrudeXFaceNormal.clone().multiplyScalar(newWidth / 2));
+            extrudeTarget.position.copy(newPosition);
+            extrudeTarget.scale.x = newWidth / extrudeTarget.geometry.parameters.width;
+
+            updateTextureRepeatOnObject(extrudeTarget);
+            updateTotalPrice();
+
+            const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
+            const depth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
+            const dimensionDiv = document.getElementById('dimension-info');
+            if (dimensionDiv) {
+                dimensionDiv.style.display = 'block';
+                dimensionDiv.innerHTML = `<b>크기 정보</b><br>가로: ${newWidth.toFixed(2)}<br>세로: ${depth.toFixed(2)}<br>높이: ${height.toFixed(2)}`;
+                dimensionDiv.style.left = (event.clientX + 20) + 'px';
+                dimensionDiv.style.top = (event.clientY + 20) + 'px';
             }
-            if (Math.abs(faceX - rightX) < minDist) {
-                minDist = Math.abs(faceX - rightX);
-                snapTargetX = rightX;
-            }
-        });
-        // === 스냅 가이드(보라색 구) 표시 ===
-        if (typeof snapGuide === 'undefined' || !snapGuide) {
-            const geometry = new THREE.SphereGeometry(0.05, 16, 16);
-            const material = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.7 });
-            snapGuide = new THREE.Mesh(geometry, material);
-            snapGuide.visible = false;
-            scene.add(snapGuide);
-        }
-        if (snapTargetX !== null) {
-            // 스냅: 면에 딱 맞게 붙임 + 가이드 표시
-            newWidth = Math.abs(snapTargetX - extrudeXFixedX);
-            newPosX = (snapTargetX + extrudeXFixedX) / 2;
-            snapGuide.visible = true;
-            snapGuide.position.set(snapTargetX, extrudeTarget.position.y, extrudeTarget.position.z);
-        } else {
-            snapGuide.visible = false;
-        }
-        extrudeTarget.scale.x = newWidth / extrudeTarget.geometry.parameters.width;
-        extrudeTarget.position.x = newPosX;
-        updateTextureRepeatOnObject(extrudeTarget);
-        updateTotalPrice(); // 가격 업데이트
-        // 정보 표시
-        const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
-        const depth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
-        const dimensionDiv = document.getElementById('dimension-info');
-        if (dimensionDiv) {
-            dimensionDiv.style.display = 'block';
-            dimensionDiv.innerHTML = `<b>크기 정보</b><br>가로: ${(extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x).toFixed(2)}<br>세로: ${depth.toFixed(2)}<br>높이: ${height.toFixed(2)}`;
-            dimensionDiv.style.position = 'fixed';
-            dimensionDiv.style.left = (event.clientX + 20) + 'px';
-            dimensionDiv.style.top = (event.clientY + 20) + 'px';
-            dimensionDiv.style.zIndex = 9999;
         }
     } else if (isExtrudingZ) {
-        // extrudeZ(앞/뒤면) - 기본 + 최소한의 면-면 스냅만 추가
-        const rect = renderer.domElement.getBoundingClientRect();
-        let mouseScreen, deltaScreen;
-        if (extrudeZScreenAxis === 'y') {
-            mouseScreen = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-            deltaScreen = mouseScreen - extrudeZStartScreen;
-        } else {
-            mouseScreen = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            deltaScreen = mouseScreen - extrudeZStartScreen;
-        }
-        let direction = 1;
-        const worldPos = new THREE.Vector3(extrudeTarget.position.x, extrudeTarget.position.y, extrudeZStartZ);
-        const normalEnd = worldPos.clone().add(extrudeZFaceNormal);
-        const normalScreen = normalEnd.project(camera).sub(worldPos.clone().project(camera)).normalize();
-        const normalScreenVal = extrudeZScreenAxis === 'y' ? normalScreen.y : normalScreen.x;
-        if (normalScreenVal * deltaScreen < 0) direction = -1;
-        const cameraDistance = camera.position.distanceTo(extrudeTarget.position);
-        const scaleFactor = cameraDistance * 2 * Math.tan(camera.fov * Math.PI / 360);
-        const moveAmount = Math.abs(deltaScreen) * scaleFactor * 0.5 * direction;
-        let dragZ = extrudeZStartZ + moveAmount * extrudeZFaceSign;
-        let newDepth = 0;
-        let newPosZ = 0;
-        if (extrudeZFaceSign > 0) {
-            newDepth = Math.max(0.1, dragZ - extrudeZFixedZ);
-            newPosZ = (dragZ + extrudeZFixedZ) / 2;
-        } else {
-            newDepth = Math.max(0.1, extrudeZFixedZ - dragZ);
-            newPosZ = (dragZ + extrudeZFixedZ) / 2;
-        }
-        // 최소한의 면-면 스냅
-        let snapMin = 0.1;
-        let depth = extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z;
-        let faceZ = extrudeZFaceSign > 0 ? (newPosZ + newDepth / 2) : (newPosZ - newDepth / 2);
-        let snapTargetZ = null;
-        let minDist = snapMin;
-        drawableObjects.forEach(obj => {
-            if (obj === extrudeTarget) return;
-            const objDepth = obj.geometry.parameters.depth * obj.scale.z;
-            const frontZ = obj.position.z + objDepth / 2;
-            const backZ = obj.position.z - objDepth / 2;
-            if (Math.abs(faceZ - frontZ) < minDist) {
-                minDist = Math.abs(faceZ - frontZ);
-                snapTargetZ = frontZ;
+        const intersectionPoint = new THREE.Vector3();
+        if (raycaster.ray.intersectPlane(dragPlane, intersectionPoint)) {
+            // Calculate the new depth based on the distance from the fixed point
+            const newDepth = Math.max(0.1, intersectionPoint.clone().sub(extrudeFixedPoint).dot(extrudeZFaceNormal));
+
+            // Recalculate position and scale based on the fixed point
+            const newPosition = extrudeFixedPoint.clone().add(extrudeZFaceNormal.clone().multiplyScalar(newDepth / 2));
+            extrudeTarget.position.copy(newPosition);
+            extrudeTarget.scale.z = newDepth / extrudeTarget.geometry.parameters.depth;
+
+            updateTextureRepeatOnObject(extrudeTarget);
+            updateTotalPrice();
+
+            const width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
+            const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
+            const dimensionDiv = document.getElementById('dimension-info');
+            if (dimensionDiv) {
+                dimensionDiv.style.display = 'block';
+                dimensionDiv.innerHTML = `<b>크기 정보</b><br>가로: ${width.toFixed(2)}<br>세로: ${newDepth.toFixed(2)}<br>높이: ${height.toFixed(2)}`;
+                dimensionDiv.style.left = (event.clientX + 20) + 'px';
+                dimensionDiv.style.top = (event.clientY + 20) + 'px';
             }
-            if (Math.abs(faceZ - backZ) < minDist) {
-                minDist = Math.abs(faceZ - backZ);
-                snapTargetZ = backZ;
-            }
-        });
-        // === 스냅 가이드(보라색 구) 표시 ===
-        if (typeof snapGuide === 'undefined' || !snapGuide) {
-            const geometry = new THREE.SphereGeometry(0.05, 16, 16);
-            const material = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.7 });
-            snapGuide = new THREE.Mesh(geometry, material);
-            snapGuide.visible = false;
-            scene.add(snapGuide);
-        }
-        if (snapTargetZ !== null) {
-            // 스냅: 면에 딱 맞게 붙임 + 가이드 표시
-            newDepth = Math.abs(snapTargetZ - extrudeZFixedZ);
-            newPosZ = (snapTargetZ + extrudeZFixedZ) / 2;
-            snapGuide.visible = true;
-            snapGuide.position.set(extrudeTarget.position.x, extrudeTarget.position.y, snapTargetZ);
-        } else {
-            snapGuide.visible = false;
-        }
-        extrudeTarget.scale.z = newDepth / extrudeTarget.geometry.parameters.depth;
-        extrudeTarget.position.z = newPosZ;
-        updateTextureRepeatOnObject(extrudeTarget);
-        updateTotalPrice(); // 가격 업데이트
-        // 정보 표시
-        const width = extrudeTarget.geometry.parameters.width * extrudeTarget.scale.x;
-        const height = extrudeTarget.geometry.parameters.height * extrudeTarget.scale.y;
-        const dimensionDiv = document.getElementById('dimension-info');
-        if (dimensionDiv) {
-            dimensionDiv.style.display = 'block';
-            dimensionDiv.innerHTML = `<b>크기 정보</b><br>가로: ${width.toFixed(2)}<br>세로: ${(extrudeTarget.geometry.parameters.depth * extrudeTarget.scale.z).toFixed(2)}<br>높이: ${height.toFixed(2)}`;
-            dimensionDiv.style.position = 'fixed';
-            dimensionDiv.style.left = (event.clientX + 20) + 'px';
-            dimensionDiv.style.top = (event.clientY + 20) + 'px';
-            dimensionDiv.style.zIndex = 9999;
         }
     } else if (isDrawing) {
         const currentPoint = new THREE.Vector3();
@@ -1540,6 +1378,8 @@ async function onPointerUp(event) { // async 키워드 추가
         controls.enabled = true;
         extrudeStackedObjects = [];
         extrudeOldTransforms = [];
+        dragPlane = null;
+        extrudeFixedPoint = null;
         // 정보창 숨김
         const dimensionDiv = document.getElementById('dimension-info');
         if (dimensionDiv) {
@@ -1564,6 +1404,8 @@ async function onPointerUp(event) { // async 키워드 추가
         controls.enabled = true;
         extrudeStackedObjects = [];
         extrudeOldTransforms = [];
+        dragPlane = null;
+        extrudeFixedPoint = null;
         // 정보창 숨김
         const dimensionDiv = document.getElementById('dimension-info');
         if (dimensionDiv) {
