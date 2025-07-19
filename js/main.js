@@ -37,6 +37,7 @@ scene.add(transformControls);
 transformControls.size = 1.5; // 회전 가이드 크기 조정
 
 let oldQuaternion = null;
+let oldPositions = new Map(); // To store positions of the selected object and those stacked on it
 const snapAngle = Math.PI / 12; // 15도 스냅
 
 transformControls.addEventListener('objectChange', function () {
@@ -49,6 +50,7 @@ transformControls.addEventListener('objectChange', function () {
             euler.z = Math.round(euler.z / snapAngle) * snapAngle;
             selectedObject.quaternion.setFromEuler(euler);
         }
+        adjustObjectToRestOnSurface(selectedObject);
     }
 });
 
@@ -56,16 +58,29 @@ transformControls.addEventListener('mouseUp', function () {
     if (selectedObject && oldQuaternion) {
         const newQuaternion = selectedObject.quaternion.clone();
         if (!oldQuaternion.equals(newQuaternion)) {
-            history.execute(new RotationCommand(selectedObject, oldQuaternion, newQuaternion));
+            // Use the new ComplexRotationCommand
+            history.execute(new ComplexRotationCommand(selectedObject, oldQuaternion, newQuaternion, oldPositions));
         }
     }
-    oldQuaternion = null; // 상태 초기화
+    oldQuaternion = null;
+    oldPositions.clear();
     controls.enabled = true;
 });
 
 transformControls.addEventListener('mouseDown', function() {
     if (selectedObject) {
         oldQuaternion = selectedObject.quaternion.clone();
+        oldPositions.clear();
+        
+        // Store the initial position of the selected object
+        oldPositions.set(selectedObject, selectedObject.position.clone());
+
+        // Store initial positions of all stacked objects
+        const stackedObjects = [];
+        findStackedObjectsRecursive(selectedObject, stackedObjects);
+        stackedObjects.forEach(obj => {
+            oldPositions.set(obj, obj.position.clone());
+        });
     }
     controls.enabled = false;
 });
@@ -720,6 +735,82 @@ class GroupTextureCommand {
         for (let i = this.commands.length - 1; i >= 0; i--) {
             this.commands[i].undo();
         }
+    }
+}
+
+class ComplexRotationCommand {
+    constructor(object, oldQuaternion, newQuaternion, oldPositions) {
+        this.object = object;
+        this.oldQuaternion = oldQuaternion;
+        this.newQuaternion = newQuaternion;
+        this.oldPositions = new Map(oldPositions); // Make a copy of the map
+        this.newPositions = new Map();
+        this.name = 'Rotate and Adjust';
+
+        // Capture new positions right away
+        this.oldPositions.forEach((pos, obj) => {
+            this.newPositions.set(obj, obj.position.clone());
+        });
+    }
+
+    execute() {
+        this.object.quaternion.copy(this.newQuaternion);
+        this.newPositions.forEach((pos, obj) => {
+            obj.position.copy(pos);
+        });
+    }
+
+    undo() {
+        this.object.quaternion.copy(this.oldQuaternion);
+        this.oldPositions.forEach((pos, obj) => {
+            obj.position.copy(pos);
+        });
+    }
+}
+
+function isObjectStackedOn(base, target) {
+    const stacked = [];
+    findStackedObjectsRecursive(base, stacked);
+    return stacked.includes(target);
+}
+
+function adjustObjectToRestOnSurface(object) {
+    const objectBox = new THREE.Box3().setFromObject(object);
+    const lowestPointY = objectBox.min.y;
+
+    let highestSurfaceY = 0; // Ground plane at Y=0
+
+    const otherObjects = drawableObjects.filter(obj => obj !== object && !isObjectStackedOn(object, obj));
+
+    if (otherObjects.length > 0) {
+        const testPoints = [
+            new THREE.Vector3(objectBox.min.x, objectBox.max.y, objectBox.min.z),
+            new THREE.Vector3(objectBox.max.x, objectBox.max.y, objectBox.min.z),
+            new THREE.Vector3(objectBox.min.x, objectBox.max.y, objectBox.max.z),
+            new THREE.Vector3(objectBox.max.x, objectBox.max.y, objectBox.max.z),
+            new THREE.Vector3((objectBox.min.x + objectBox.max.x) / 2, objectBox.max.y, (objectBox.min.z + objectBox.max.z) / 2)
+        ];
+        const down = new THREE.Vector3(0, -1, 0);
+
+        testPoints.forEach(point => {
+            const raycaster = new THREE.Raycaster(point, down);
+            const intersects = raycaster.intersectObjects(otherObjects);
+            if (intersects.length > 0) {
+                highestSurfaceY = Math.max(highestSurfaceY, intersects[0].point.y);
+            }
+        });
+    }
+
+    const adjustment = highestSurfaceY - lowestPointY;
+
+    if (Math.abs(adjustment) > 0.0001) {
+        object.position.y += adjustment;
+
+        const stackedObjects = [];
+        findStackedObjectsRecursive(object, stackedObjects);
+        stackedObjects.forEach(stackedObj => {
+            stackedObj.position.y += adjustment;
+        });
     }
 }
 
